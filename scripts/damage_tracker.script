@@ -1,0 +1,94 @@
+hit_log = {}
+
+hit_type_map = {
+    [0] = "Огнестрел/Холодное", [1] = "Удар/Тупое", [2] = "Огонь",
+    [3] = "Электрошок", [4] = "Падение", [5] = "Аномалия",
+    [6] = "Химия/Кислота", [7] = "Радиация", [8] = "Пси-излучение",
+    [9] = "Взрыв", [10] = "Огнестрел+Ожог"
+}
+
+printf(">>> DAMAGE TRACKER LOADED <<<")
+
+function on_actor_hit(power, impulse, dir, who, bone_index, space_restrictor, hit_type)
+    -- ЭТА СТРОК ПОЯВИТСЯ В КОНСОЛИ ПРИ ЛЮБОМ ПОПАДАНИИ
+    printf("[DAMAGE_TRACKER] CALLBACK FIRED | Power: %s | Type: %s", tostring(power), tostring(hit_type))
+	
+	if not power or power <= 0 then return end
+    
+    -- Логируем в консоль для отладки (виден в xray.log)
+    printf("[DAMAGE_TRACKER] Hit: %.1f | Source: %s | Type: %d", power, who and who:character_name() or "nil", hit_type or -1)
+
+    local source_name = "Неизвестно"
+    local safe_who = who and who:valid() and who or nil
+
+    if safe_who then
+        local char_name = safe_who:character_name()
+        if char_name and char_name ~= "" then
+            source_name = char_name
+        else
+            local ok, ini = pcall(system_ini)
+            if ok and ini:line_exist("spawn_sections", safe_who:section()) then
+                source_name = ini:r_string("spawn_sections", safe_who:section())
+            else
+                source_name = safe_who:section()
+            end
+        end
+    else
+        local ht = hit_type_map[hit_type or 0]
+        source_name = ht or ("Источник #" .. tostring(hit_type or 0))
+    end
+
+    local type_str = hit_type_map[hit_type or 0] or ("Тип " .. tostring(hit_type or 0))
+
+    table.insert(hit_log, { power = power, type = type_str, source = source_name })
+end
+
+function on_actor_death()
+    printf("[DAMAGE_TRACKER] Actor died. Entries in log: %d", #hit_log)
+    
+    if #hit_log == 0 then
+        hit_log = {}
+        return
+    end
+
+    local aggregated = {}
+    local total_dmg = 0
+
+    for _, hit in ipairs(hit_log) do
+        local key = hit.source .. " [" .. hit.type .. "]"
+        if not aggregated[key] then aggregated[key] = {dmg = 0, hits = 0} end
+        aggregated[key].dmg = aggregated[key].dmg + hit.power
+        aggregated[key].hits = aggregated[key].hits + 1
+        total_dmg = total_dmg + hit.power
+    end
+
+    local sorted = {}
+    for k, v in pairs(aggregated) do
+        table.insert(sorted, {name = k, dmg = v.dmg, hits = v.hits})
+    end
+    table.sort(sorted, function(a, b) return a.dmg > b.dmg end)
+
+    local msg = "СТАТИСТИКА ПОЛУЧЕННОГО УРОНА\n"
+    msg = msg .. "Всего урона: " .. math.floor(total_dmg) .. "\n\n"
+    for i, entry in ipairs(sorted) do
+        msg = msg .. string.format("%d. %s\n   Урон: %d | Попаданий: %d\n", i, entry.name, math.floor(entry.dmg), entry.hits)
+    end
+
+    -- 1. Сохраняем в файл (100% надежно)
+    local log_path = "appdata/logs/damage_report.txt"
+    local f = io.open(log_path, "a")
+    if f then
+        f:write(msg .. "\n================================\n")
+        f:close()
+    end
+
+    -- 2. Выводим в PDA/Чат (не блокирует экран смерти)
+    if news_manager and news_manager.add_news then
+        news_manager.add_news(msg, "ui_news", 255, 255, 255, 12.0)
+    elseif level and level.add_game_news then
+        level.add_game_news(msg, nil, 255, 255, 255, 12.0) -- Убрал лишний "0", который обнулял время показа
+    end
+
+    printf("[DAMAGE_TRACKER] Stats output finished.")
+    hit_log = {}
+end
