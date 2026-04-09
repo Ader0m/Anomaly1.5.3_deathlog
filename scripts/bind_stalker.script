@@ -164,7 +164,17 @@ function actor_binder:reinit()
 				-- coc
 				["hud_animation_end"]		= bind_stalker_ext.actor_on_hud_animation_end,
 				["hit"] = function(power, impulse, dir, who, bone_index, space_restrictor, hit_type)
-    if on_actor_hit then -- Прямой вызов, если функция загружена
+    
+	log("[BIND_STALKER] HIT CALLBACK START")
+	log("[BIND_STALKER] Arg 1 (power):", power, "Type:", type(power))
+	log("[BIND_STALKER] Arg 2 (impulse):", impulse, "Type:", type(impulse))
+	log("[BIND_STALKER] Arg 3 (hit_type):", hit_type, "Type:", type(hit_type))
+	log("[BIND_STALKER] Arg 4 (who):", who, "Type:", type(who))
+	log("[BIND_STALKER] Arg 5 (bone):", bone, "Type:", type(bone))
+	log("[BIND_STALKER] Arg 6 (dir):", dir, "Type:", type(dir))
+	log("[BIND_STALKER] Arg 7 (pos):", pos, "Type:", type(pos))
+
+	if on_actor_hit then -- Прямой вызов, если функция загружена
         on_actor_hit(power, impulse, dir, who, bone_index, space_restrictor, hit_type)
     end
     bind_stalker_ext.actor_on_hit_callback(power, impulse, dir, who, bone_index, space_restrictor, hit_type)

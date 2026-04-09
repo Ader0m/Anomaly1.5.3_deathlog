@@ -1,25 +1,68 @@
 -- damage_tracker.script
 -- Логирование урона актора
 
-local function safe_log(message)
+local function safe_log(...)
     -- log() пишет в xray.log, print() только в консоль отладки
-    log(message)
+    -- Используем varargs (...) вместо string.format для безопасности
+    log(...)
 end
 
-safe_log(">>> DAMAGE TRACKER LOADED <<<")
+safe_log(">>> DAMAGE TRACKER LOADED (SAFE MODE) <<<")
 
-function on_actor_hit(power, impulse, dir, who, bone_index, space_restrictor, hit_type)
+function on_actor_hit(p1, p2, p3, p4, p5, p6, p7)
     safe_log("[DAMAGE_TRACKER] CALLBACK FIRED")
 
-    local p = tonumber(power) or 0
-    local t = tonumber(hit_type) or -1
+    -- Диагностика всех сырых параметров БЕЗ tostring и string.format
+    safe_log("[DAMAGE_TRACKER] RAW P1 type:", type(p1))
+    safe_log("[DAMAGE_TRACKER] RAW P2 type:", type(p2))
+    safe_log("[DAMAGE_TRACKER] RAW P3 type:", type(p3))
+    safe_log("[DAMAGE_TRACKER] RAW P4 type:", type(p4))
+    safe_log("[DAMAGE_TRACKER] RAW P5 type:", type(p5))
+    safe_log("[DAMAGE_TRACKER] RAW P6 type:", type(p6))
+    safe_log("[DAMAGE_TRACKER] RAW P7 type:", type(p7))
 
-    safe_log(string.format("[DAMAGE_TRACKER] Power: %.2f | Type: %d", p, t))
+    local power = 0
+    local impulse = 0
+    local dir = nil
+    local who = nil
+    local bone_index = 0
+    local space_restrictor = nil
+    local hit_type = -1
+
+    -- Вариант 1: Первый параметр - это таблица хита (часто в Anomaly/XRay)
+    if type(p1) == "table" then
+        safe_log("[DAMAGE_TRACKER] Detected HIT TABLE format")
+        power = p1.power or p1.pwr or 0
+        impulse = p1.impulse or 0
+        dir = p1.dir
+        who = p1.who or p1.attacker
+        bone_index = p1.bone_index or p1.bone or 0
+        space_restrictor = p1.space_restrictor
+        hit_type = p1.type or p1.hit_type or -1
+    else
+        -- Вариант 2: Параметры переданы по отдельности (стандартный вызов)
+        safe_log("[DAMAGE_TRACKER] Detected SEPARATE ARGS format")
+        power = type(p1) == "number" and p1 or 0
+        impulse = type(p2) == "number" and p2 or 0
+        dir = p3
+        who = p4
+        bone_index = type(p5) == "number" and p5 or 0
+        space_restrictor = p6
+        hit_type = type(p7) == "number" and p7 or -1
+    end
+
+    safe_log("[DAMAGE_TRACKER] Power:", power, "| Type:", hit_type)
 
     if who then
-        local ok, who_str = pcall(tostring, who)
-        if ok then
-            safe_log(string.format("[DAMAGE_TRACKER] Source: %s", who_str))
+        -- Безопасная попытка получить имя объекта
+        local ok, name = pcall(function()
+            if type(who) == "userdata" then
+                return who:name()
+            end
+            return tostring(who)
+        end)
+        if ok and name then
+            safe_log("[DAMAGE_TRACKER] Source:", name)
         else
             safe_log("[DAMAGE_TRACKER] Source: <invalid object>")
         end
@@ -27,6 +70,7 @@ function on_actor_hit(power, impulse, dir, who, bone_index, space_restrictor, hi
         safe_log("[DAMAGE_TRACKER] Source: Nil (environment/fall/etc)")
     end
 
+    safe_log("[DAMAGE_TRACKER] Bone:", bone_index)
     safe_log("[DAMAGE_TRACKER] --- END HIT ---")
 end
 
