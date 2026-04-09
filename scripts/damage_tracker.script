@@ -1,163 +1,40 @@
--- Импортируем printf из utils_data если он есть, иначе создаем заглушку
-local function safe_printf(fmt, ...)
-    local ok, msg = pcall(string.format, fmt, ...)
-    if ok then
-        if printf then
-            printf(msg)
-        else
-            print(msg)
-        end
-    end
+-- damage_tracker.script
+-- Минимальный логгер урона для отладки - БЕЗ ВЫЗОВА МЕТОДОВ
+
+local function safe_log(message)
+    print(message)
 end
 
-hit_log = {}
-
-hit_type_map = {
-    [0] = "Огнестрел/Холодное", [1] = "Удар/Тупое", [2] = "Огонь",
-    [3] = "Электрошок", [4] = "Падение", [5] = "Аномалия",
-    [6] = "Химия/Кислота", [7] = "Радиация", [8] = "Пси-излучение",
-    [9] = "Взрыв", [10] = "Огнестрел+Ожог"
-}
-
-safe_printf(">>> DAMAGE TRACKER LOADED <<<")
+safe_log("[DAMAGE_TRACKER] MODULE LOADED SUCCESSFULLY")
 
 function on_actor_hit(power, impulse, dir, who, bone_index, space_restrictor, hit_type)
-    -- Безопасное получение значений с проверкой на nil
-    local safe_power = power or 0
-    local safe_hit_type = hit_type or -1
+    -- Логируем ТОЛЬКО через string.format (безопасная конкатенация)
+    safe_log("[DAMAGE_TRACKER] CALLBACK FIRED")
 
-    -- ЭТА СТРОКА ПОЯВИТСЯ В КОНСОЛИ ПРИ ЛЮБОМ ПОПАДАНИИ (без упоминания who)
-    safe_printf("[DAMAGE_TRACKER] CALLBACK FIRED | Power: %s | Type: %s", tostring(safe_power), tostring(safe_hit_type))
+    local p = tonumber(power) or 0
+    local t = tonumber(hit_type) or -1
 
-    if safe_power <= 0 then return end
+    safe_log(string.format("[DAMAGE_TRACKER] Power: %.2f | Type: %d", p, t))
 
-    -- Логируем в консоль для отладки (виден в xray.log) - БЕЗ ОБРАЩЕНИЯ К who
-    local source_name_debug = "nil"
-    if who and type(who) == "userdata" then
-        local ok, char_name = pcall(function()
-            if who.valid and who:valid() then
-                return who:character_name()
-            end
-            return nil
-        end)
-        if ok and char_name and char_name ~= "" then
-            source_name_debug = char_name
+    -- Источник через безопасный tostring
+    if who then
+        local ok, who_str = pcall(tostring, who)
+        if ok then
+            safe_log(string.format("[DAMAGE_TRACKER] Source: %s", who_str))
         else
-            local ok2, section = pcall(function()
-                if who.section then
-                    return who:section()
-                end
-                return nil
-            end)
-            if ok2 and section and section ~= "" then
-                source_name_debug = section
-            else
-                source_name_debug = "unknown_userdata"
-            end
-        end
-    end
-    safe_printf("[DAMAGE_TRACKER] Hit: %.1f | Source: %s | Type: %d", safe_power, source_name_debug, safe_hit_type)
-
-    local source_name = "Неизвестно"
-    local safe_who = nil
-
-    if who and type(who) == "userdata" then
-        local ok_valid, is_valid = pcall(function()
-            if who.valid then
-                return who:valid()
-            end
-            return false
-        end)
-        if ok_valid and is_valid then
-            safe_who = who
-        end
-    end
-
-    if safe_who then
-        local ok_char, char_name = pcall(function()
-            if safe_who.character_name then
-                return safe_who:character_name()
-            end
-            return nil
-        end)
-        if ok_char and char_name and char_name ~= "" then
-            source_name = char_name
-        else
-            local ok_sec, section = pcall(function()
-                if safe_who.section then
-                    return safe_who:section()
-                end
-                return nil
-            end)
-            if ok_sec and section and section ~= "" then
-                local ok_ini, ini = pcall(system_ini)
-                if ok_ini and ini and ini.line_exist and ini:line_exist("spawn_sections", section) then
-                    source_name = ini:r_string("spawn_sections", section)
-                else
-                    source_name = section
-                end
-            end
+            safe_log("[DAMAGE_TRACKER] Source: <invalid object>")
         end
     else
-        local ht = hit_type_map[safe_hit_type]
-        source_name = ht or ("Источник #" .. tostring(safe_hit_type))
+        safe_log("[DAMAGE_TRACKER] Source: Nil (environment/fall/etc)")
     end
 
-    local type_str = hit_type_map[safe_hit_type] or ("Тип " .. tostring(safe_hit_type))
-
-    table.insert(hit_log, { power = safe_power, type = type_str, source = source_name })
+    safe_log("[DAMAGE_TRACKER] --- END HIT ---")
 end
 
 function on_actor_death()
-    safe_printf("[DAMAGE_TRACKER] Actor died. Entries in log: %d", #hit_log)
-
-    if #hit_log == 0 then
-        hit_log = {}
-        return
-    end
-
-    local aggregated = {}
-    local total_dmg = 0
-
-    for _, hit in ipairs(hit_log) do
-        local key = hit.source .. " [" .. hit.type .. "]"
-        if not aggregated[key] then aggregated[key] = {dmg = 0, hits = 0} end
-        aggregated[key].dmg = aggregated[key].dmg + hit.power
-        aggregated[key].hits = aggregated[key].hits + 1
-        total_dmg = total_dmg + hit.power
-    end
-
-    local sorted = {}
-    for k, v in pairs(aggregated) do
-        table.insert(sorted, {name = k, dmg = v.dmg, hits = v.hits})
-    end
-    table.sort(sorted, function(a, b) return a.dmg > b.dmg end)
-
-    local msg = "СТАТИСТИКА ПОЛУЧЕННОГО УРОНА\n"
-    msg = msg .. "Всего урона: " .. math.floor(total_dmg) .. "\n\n"
-    for i, entry in ipairs(sorted) do
-        msg = msg .. string.format("%d. %s\n   Урон: %d | Попаданий: %d\n", i, entry.name, math.floor(entry.dmg), entry.hits)
-    end
-
-    -- 1. Сохраняем в файл (100% надежно)
-    local log_path = "appdata/logs/damage_report.txt"
-    local f = io.open(log_path, "a")
-    if f then
-        f:write(msg .. "\n================================\n")
-        f:close()
-    end
-
-    -- 2. Выводим в PDA/Чат (не блокирует экран смерти)
-    if news_manager and news_manager.add_news then
-        news_manager.add_news(msg, "ui_news", 255, 255, 255, 12.0)
-    elseif level and level.add_game_news then
-        level.add_game_news(msg, nil, 255, 255, 255, 12.0)
-    end
-
-    safe_printf("[DAMAGE_TRACKER] Stats output finished.")
-    hit_log = {}
+    safe_log("[DAMAGE_TRACKER] ACTOR DIED")
 end
 
--- Экспорт функций в глобальную область видимости для использования в bind_stalker.script
+-- Экспорт функций в глобальную область видимости
 _G.on_actor_hit = on_actor_hit
 _G.on_actor_death = on_actor_death
