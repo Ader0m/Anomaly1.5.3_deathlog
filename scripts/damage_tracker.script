@@ -6,6 +6,21 @@ local function safe_tostring(val)
     if ok then return result else return "<error converting>" end
 end
 
+-- Функция для безопасного вызова методов userdata
+local function safe_call_method(obj, method_name, ...)
+    if type(obj) ~= "userdata" then
+        return false, nil
+    end
+    local ok, result = pcall(function()
+        return obj[method_name](obj, ...)
+    end)
+    if ok then
+        return true, result
+    else
+        return false, nil
+    end
+end
+
 local function safe_log(...)
     -- log() пишет в xray.log, print() только в консоль отладки
     -- Используем varargs (...) вместо string.format для безопасности
@@ -46,14 +61,102 @@ function on_actor_hit(p1, p2, p3, p4, p5, p6, p7)
         hit_type = p1.type or p1.hit_type or -1
     else
         -- Вариант 2: Параметры переданы по отдельности (стандартный вызов)
+        -- НО судя по логам: p1=power(userdata), p2=impulse(userdata), p3=dir(number), p4=who(userdata), p5=bone(userdata), p6=space_restrictor(number), p7=hit_type(nil)
+        -- Это значит что hit_type приходит последним и он nil, а dir и space_restrictor - числа
         safe_log("[DAMAGE_TRACKER] Detected SEPARATE ARGS format")
-        power = type(p1) == "number" and p1 or 0
-        impulse = type(p2) == "number" and p2 or 0
-        dir = p3
-        who = p4
-        bone_index = type(p5) == "number" and p5 or 0
-        space_restrictor = p6
-        hit_type = type(p7) == "number" and p7 or -1
+        
+        -- Пробуем извлечь данные из userdata объектов
+        -- P1 (power) - userdata, пробуем получить .power или это CHit объект
+        if type(p1) == "userdata" then
+            local ok, val = safe_call_method(p1, "power")
+            if ok and type(val) == "number" then
+                power = val
+                safe_log("[DAMAGE_TRACKER] Extracted power from P1 userdata: " .. tostring(power))
+            else
+                -- Может это просто число в userdata оболочке? Пробуем другие методы
+                safe_log("[DAMAGE_TRACKER] Failed to extract power from P1, trying alternative methods...")
+            end
+        elseif type(p1) == "number" then
+            power = p1
+        end
+        
+        -- P2 (impulse) - userdata
+        if type(p2) == "userdata" then
+            local ok, val = safe_call_method(p2, "impulse")
+            if ok and type(val) == "number" then
+                impulse = val
+                safe_log("[DAMAGE_TRACKER] Extracted impulse from P2 userdata: " .. tostring(impulse))
+            end
+        elseif type(p2) == "number" then
+            impulse = p2
+        end
+        
+        -- P3 (dir) - по логам это number (0.31...)
+        if type(p3) == "number" then
+            dir = p3
+            safe_log("[DAMAGE_TRACKER] Dir is number: " .. tostring(dir))
+        elseif type(p3) == "userdata" then
+            -- Может быть вектором, пробуем получить компоненты
+            safe_log("[DAMAGE_TRACKER] Dir is userdata, trying to extract components...")
+        end
+        
+        -- P4 (who) - userdata (объект CObject)
+        if type(p4) == "userdata" then
+            who = p4
+            local ok, name = safe_call_method(p4, "name")
+            if ok and name then
+                safe_log("[DAMAGE_TRACKER] Who object name: " .. tostring(name))
+            else
+                safe_log("[DAMAGE_TRACKER] Who object exists but name() failed")
+            end
+        end
+        
+        -- P5 (bone_index) - userdata
+        if type(p5) == "userdata" then
+            local ok, val = safe_call_method(p5, "bone")
+            if ok and type(val) == "number" then
+                bone_index = val
+                safe_log("[DAMAGE_TRACKER] Extracted bone from P5 userdata: " .. tostring(bone_index))
+            else
+                -- Пробуем bone_index
+                ok, val = safe_call_method(p5, "bone_index")
+                if ok and type(val) == "number" then
+                    bone_index = val
+                    safe_log("[DAMAGE_TRACKER] Extracted bone_index from P5 userdata: " .. tostring(bone_index))
+                end
+            end
+        elseif type(p5) == "number" then
+            bone_index = p5
+        end
+        
+        -- P6 (space_restrictor) - по логам это number (20)
+        if type(p6) == "number" then
+            space_restrictor = p6
+            safe_log("[DAMAGE_TRACKER] Space restrictor is number: " .. tostring(space_restrictor))
+        end
+        
+        -- P7 (hit_type) - по логам nil, значит hit_type не передаётся или порядок другой
+        if p7 ~= nil then
+            if type(p7) == "number" then
+                hit_type = p7
+                safe_log("[DAMAGE_TRACKER] Hit type from P7: " .. tostring(hit_type))
+            end
+        else
+            safe_log("[DAMAGE_TRACKER] P7 is nil, hit_type unknown. May be embedded in CHit object (P1)")
+            -- Если P7 nil, возможно первый параметр это CHit объект со всеми данными
+            -- В X-Ray/Anomaly CHit содержит: power, impulse, dir, who, bone, hit_type
+            if type(p1) == "userdata" then
+                safe_log("[DAMAGE_TRACKER] Trying to extract all data from P1 as CHit object...")
+                -- Пробуем все возможные поля CHit
+                local fields = {"power", "pwr", "impulse", "dir", "who", "attacker", "bone", "bone_index", "type", "hit_type", "space_restrictor"}
+                for _, field in ipairs(fields) do
+                    local ok, val = safe_call_method(p1, field)
+                    if ok and val ~= nil then
+                        safe_log("[DAMAGE_TRACKER]   CHit." .. field .. " = " .. safe_tostring(val) .. " (type: " .. type(val) .. ")")
+                    end
+                end
+            end
+        end
     end
 
     safe_log("[DAMAGE_TRACKER] Power: " .. safe_tostring(power) .. " | Hit Type: " .. safe_tostring(hit_type))
