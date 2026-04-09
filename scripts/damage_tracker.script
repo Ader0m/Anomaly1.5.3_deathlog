@@ -24,24 +24,42 @@ function on_actor_hit(power, impulse, dir, who, bone_index, space_restrictor, hi
 
     -- Логируем в консоль для отладки (виден в xray.log)
     local source_name_debug = "nil"
-    if who and who:valid() then
-        source_name_debug = who:character_name() or who:section() or "unknown"
+    if who and type(who) == "userdata" then
+        local ok, char_name = pcall(function() return who:character_name() end)
+        if ok and char_name then
+            source_name_debug = char_name
+        else
+            local ok2, section = pcall(function() return who:section() end)
+            if ok2 and section then
+                source_name_debug = section
+            else
+                source_name_debug = "unknown"
+            end
+        end
     end
     printf("[DAMAGE_TRACKER] Hit: %.1f | Source: %s | Type: %d", safe_power, source_name_debug, safe_hit_type)
 
     local source_name = "Неизвестно"
-    local safe_who = who and who:valid() and who or nil
+    local safe_who = nil
+
+    if who and type(who) == "userdata" then
+        local ok_valid, is_valid = pcall(function() return who:valid() end)
+        if ok_valid and is_valid then
+            safe_who = who
+        end
+    end
 
     if safe_who then
-        local char_name = safe_who:character_name()
-        if char_name and char_name ~= "" then
+        local ok_char, char_name = pcall(function() return safe_who:character_name() end)
+        if ok_char and char_name and char_name ~= "" then
             source_name = char_name
         else
-            local ok, ini = pcall(system_ini)
-            if ok and ini:line_exist("spawn_sections", safe_who:section()) then
-                source_name = ini:r_string("spawn_sections", safe_who:section())
-            else
-                source_name = safe_who:section()
+            local ok_ini, ini = pcall(system_ini)
+            local ok_sec, section = pcall(function() return safe_who:section() end)
+            if ok_ini and ok_sec and ini:line_exist("spawn_sections", section) then
+                source_name = ini:r_string("spawn_sections", section)
+            elseif ok_sec and section then
+                source_name = section
             end
         end
     else
