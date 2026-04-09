@@ -163,18 +163,73 @@ function actor_binder:reinit()
 				
 				-- coc
 				["hud_animation_end"]		= bind_stalker_ext.actor_on_hud_animation_end,
-				["hit"] = function(power, impulse, dir, who, bone_index, space_restrictor, hit_type)
+["hit"] = function(power, impulse, dir, who, bone_index, space_restrictor, hit_type)
     
-	log("[BIND_STALKER] HIT CALLBACK START")
-	log("[BIND_STALKER] Arg 1 (power):", power, "Type:", type(power))
-	log("[BIND_STALKER] Arg 2 (impulse):", impulse, "Type:", type(impulse))
-	log("[BIND_STALKER] Arg 3 (hit_type):", hit_type, "Type:", type(hit_type))
-	log("[BIND_STALKER] Arg 4 (who):", who, "Type:", type(who))
-	log("[BIND_STALKER] Arg 5 (bone):", bone, "Type:", type(bone))
-	log("[BIND_STALKER] Arg 6 (dir):", dir, "Type:", type(dir))
-	log("[BIND_STALKER] Arg 7 (pos):", pos, "Type:", type(pos))
+    log("[BIND_STALKER] HIT CALLBACK START")
+    
+    -- Функция для безопасного вызова методов userdata
+    local function safe_call_method(obj, method_name, ...)
+        if type(obj) ~= "userdata" then
+            return false, nil
+        end
+        local ok, result = pcall(function()
+            return obj[method_name](obj, ...)
+        end)
+        if ok then
+            return true, result
+        else
+            return false, nil
+        end
+    end
+    
+    local function safe_tostring(val)
+        local ok, result = pcall(tostring, val)
+        if ok then return result else return "<error converting>" end
+    end
+    
+    log("[BIND_STALKER] Arg 1 (power): " .. safe_tostring(power) .. " Type: " .. type(power))
+    log("[BIND_STALKER] Arg 2 (impulse): " .. safe_tostring(impulse) .. " Type: " .. type(impulse))
+    log("[BIND_STALKER] Arg 3 (hit_type): " .. safe_tostring(hit_type) .. " Type: " .. type(hit_type))
+    log("[BIND_STALKER] Arg 4 (who): " .. safe_tostring(who) .. " Type: " .. type(who))
+    log("[BIND_STALKER] Arg 5 (bone_index): " .. safe_tostring(bone_index) .. " Type: " .. type(bone_index))
+    log("[BIND_STALKER] Arg 6 (dir): " .. safe_tostring(dir) .. " Type: " .. type(dir))
+    log("[BIND_STALKER] Arg 7 (space_restrictor): " .. safe_tostring(space_restrictor) .. " Type: " .. type(space_restrictor))
+    
+    -- Детальная диагностика userdata объектов
+    if type(power) == "userdata" then
+        log("[BIND_STALKER] Power is userdata, trying to extract methods...")
+        local methods = {"power", "pwr", "impulse", "dir", "who", "bone", "bone_index", "type", "hit_type"}
+        for _, method in ipairs(methods) do
+            local ok, val = safe_call_method(power, method)
+            if ok and val ~= nil then
+                log("[BIND_STALKER]   power." .. method .. " = " .. safe_tostring(val) .. " (type: " .. type(val) .. ")")
+            end
+        end
+    end
+    
+    if type(who) == "userdata" then
+        log("[BIND_STALKER] Who is userdata, trying name()...")
+        local ok, name = safe_call_method(who, "name")
+        if ok and name then
+            log("[BIND_STALKER]   who:name() = " .. tostring(name))
+        else
+            log("[BIND_STALKER]   who:name() failed")
+        end
+    end
+    
+    if type(bone_index) == "userdata" then
+        log("[BIND_STALKER] Bone_index is userdata, trying bone/bone_index methods...")
+        local ok, val = safe_call_method(bone_index, "bone")
+        if ok and val ~= nil then
+            log("[BIND_STALKER]   bone_index:bone() = " .. safe_tostring(val))
+        end
+        ok, val = safe_call_method(bone_index, "bone_index")
+        if ok and val ~= nil then
+            log("[BIND_STALKER]   bone_index:bone_index() = " .. safe_tostring(val))
+        end
+    end
 
-	if on_actor_hit then -- ������ �����, ���� ������� ���������
+    if on_actor_hit then -- Прямой вызов, если функция загружена
         on_actor_hit(power, impulse, dir, who, bone_index, space_restrictor, hit_type)
     end
     bind_stalker_ext.actor_on_hit_callback(power, impulse, dir, who, bone_index, space_restrictor, hit_type)
