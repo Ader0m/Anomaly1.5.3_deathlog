@@ -166,13 +166,17 @@ function actor_binder:reinit()
 				["hit"] = function(power, impulse, dir, who, bone_index, space_restrictor, hit_type)
     
 	log("[BIND_STALKER] HIT CALLBACK START")
-	log("[BIND_STALKER] Arg 1 (power):", power, "Type:", type(power))
-	log("[BIND_STALKER] Arg 2 (impulse):", impulse, "Type:", type(impulse))
-	log("[BIND_STALKER] Arg 3 (hit_type):", hit_type, "Type:", type(hit_type))
-	log("[BIND_STALKER] Arg 4 (who):", who, "Type:", type(who))
-	log("[BIND_STALKER] Arg 5 (bone):", bone, "Type:", type(bone))
-	log("[BIND_STALKER] Arg 6 (dir):", dir, "Type:", type(dir))
-	log("[BIND_STALKER] Arg 7 (pos):", pos, "Type:", type(pos))
+		local function safe_tostring(val)
+            local ok, result = pcall(tostring, val)
+            if ok then return result else return "<error converting>" end
+        end
+        log("[BIND_STALKER] Arg 1 (power): " .. safe_tostring(power) .. " Type: " .. type(power))
+        log("[BIND_STALKER] Arg 2 (impulse): " .. safe_tostring(impulse) .. " Type: " .. type(impulse))
+        log("[BIND_STALKER] Arg 3 (hit_type): " .. safe_tostring(hit_type) .. " Type: " .. type(hit_type))
+        log("[BIND_STALKER] Arg 4 (who): " .. safe_tostring(who) .. " Type: " .. type(who))
+        log("[BIND_STALKER] Arg 5 (bone_index): " .. safe_tostring(bone_index) .. " Type: " .. type(bone_index))
+        log("[BIND_STALKER] Arg 6 (dir): " .. safe_tostring(dir) .. " Type: " .. type(dir))
+        log("[BIND_STALKER] Arg 7 (space_restrictor): " .. safe_tostring(space_restrictor) .. " Type: " .. type(space_restrictor))
 
 	if on_actor_hit then -- Прямой вызов, если функция загружена
         on_actor_hit(power, impulse, dir, who, bone_index, space_restrictor, hit_type)

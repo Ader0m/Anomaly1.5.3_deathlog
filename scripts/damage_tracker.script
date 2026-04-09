@@ -1,6 +1,11 @@
 -- damage_tracker.script
 -- Логирование урона актора
 
+local function safe_tostring(val)
+    local ok, result = pcall(tostring, val)
+    if ok then return result else return "<error converting>" end
+end
+
 local function safe_log(...)
     -- log() пишет в xray.log, print() только в консоль отладки
     -- Используем varargs (...) вместо string.format для безопасности
@@ -12,14 +17,14 @@ safe_log(">>> DAMAGE TRACKER LOADED (SAFE MODE) <<<")
 function on_actor_hit(p1, p2, p3, p4, p5, p6, p7)
     safe_log("[DAMAGE_TRACKER] CALLBACK FIRED")
 
-    -- Диагностика всех сырых параметров БЕЗ tostring и string.format
-    safe_log("[DAMAGE_TRACKER] RAW P1 type:", type(p1))
-    safe_log("[DAMAGE_TRACKER] RAW P2 type:", type(p2))
-    safe_log("[DAMAGE_TRACKER] RAW P3 type:", type(p3))
-    safe_log("[DAMAGE_TRACKER] RAW P4 type:", type(p4))
-    safe_log("[DAMAGE_TRACKER] RAW P5 type:", type(p5))
-    safe_log("[DAMAGE_TRACKER] RAW P6 type:", type(p6))
-    safe_log("[DAMAGE_TRACKER] RAW P7 type:", type(p7))
+    -- Диагностика всех сырых параметров с использованием безопасного tostring
+    safe_log("[DAMAGE_TRACKER] RAW P1 type: " .. type(p1) .. " value: " .. safe_tostring(p1))
+    safe_log("[DAMAGE_TRACKER] RAW P2 type: " .. type(p2) .. " value: " .. safe_tostring(p2))
+    safe_log("[DAMAGE_TRACKER] RAW P3 type: " .. type(p3) .. " value: " .. safe_tostring(p3))
+    safe_log("[DAMAGE_TRACKER] RAW P4 type: " .. type(p4) .. " value: " .. safe_tostring(p4))
+    safe_log("[DAMAGE_TRACKER] RAW P5 type: " .. type(p5) .. " value: " .. safe_tostring(p5))
+    safe_log("[DAMAGE_TRACKER] RAW P6 type: " .. type(p6) .. " value: " .. safe_tostring(p6))
+    safe_log("[DAMAGE_TRACKER] RAW P7 type: " .. type(p7) .. " value: " .. safe_tostring(p7))
 
     local power = 0
     local impulse = 0
@@ -51,7 +56,7 @@ function on_actor_hit(p1, p2, p3, p4, p5, p6, p7)
         hit_type = type(p7) == "number" and p7 or -1
     end
 
-    safe_log("[DAMAGE_TRACKER] Power:", power, "| Type:", hit_type)
+    safe_log("[DAMAGE_TRACKER] Power: " .. safe_tostring(power) .. " | Hit Type: " .. safe_tostring(hit_type))
 
     if who then
         -- Безопасная попытка получить имя объекта
@@ -59,10 +64,10 @@ function on_actor_hit(p1, p2, p3, p4, p5, p6, p7)
             if type(who) == "userdata" then
                 return who:name()
             end
-            return tostring(who)
+            return safe_tostring(who)
         end)
         if ok and name then
-            safe_log("[DAMAGE_TRACKER] Source:", name)
+            safe_log("[DAMAGE_TRACKER] Source: " .. safe_tostring(name))
         else
             safe_log("[DAMAGE_TRACKER] Source: <invalid object>")
         end
@@ -70,7 +75,7 @@ function on_actor_hit(p1, p2, p3, p4, p5, p6, p7)
         safe_log("[DAMAGE_TRACKER] Source: Nil (environment/fall/etc)")
     end
 
-    safe_log("[DAMAGE_TRACKER] Bone:", bone_index)
+    safe_log("[DAMAGE_TRACKER] Bone: " .. safe_tostring(bone_index))
     safe_log("[DAMAGE_TRACKER] --- END HIT ---")
 end
 
