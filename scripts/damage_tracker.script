@@ -1,3 +1,6 @@
+-- Импортируем printf из utils_data если он есть, иначе создаем заглушку
+local printf = printf or (utils_data and utils_data.printf) or function(...) end
+
 hit_log = {}
 
 hit_type_map = {
@@ -10,13 +13,21 @@ hit_type_map = {
 printf(">>> DAMAGE TRACKER LOADED <<<")
 
 function on_actor_hit(power, impulse, dir, who, bone_index, space_restrictor, hit_type)
-    -- ЭТА СТРОК ПОЯВИТСЯ В КОНСОЛИ ПРИ ЛЮБОМ ПОПАДАНИИ
-    printf("[DAMAGE_TRACKER] CALLBACK FIRED | Power: %s | Type: %s", tostring(power), tostring(hit_type))
-	
-	if not power or power <= 0 then return end
-    
+    -- Безопасное получение значений с проверкой на nil
+    local safe_power = power or 0
+    local safe_hit_type = hit_type or -1
+
+    -- ЭТА СТРОКА ПОЯВИТСЯ В КОНСОЛИ ПРИ ЛЮБОМ ПОПАДАНИИ
+    printf("[DAMAGE_TRACKER] CALLBACK FIRED | Power: %s | Type: %s", tostring(safe_power), tostring(safe_hit_type))
+
+    if safe_power <= 0 then return end
+
     -- Логируем в консоль для отладки (виден в xray.log)
-    printf("[DAMAGE_TRACKER] Hit: %.1f | Source: %s | Type: %d", power, who and who:character_name() or "nil", hit_type or -1)
+    local source_name_debug = "nil"
+    if who and who:valid() then
+        source_name_debug = who:character_name() or who:section() or "unknown"
+    end
+    printf("[DAMAGE_TRACKER] Hit: %.1f | Source: %s | Type: %d", safe_power, source_name_debug, safe_hit_type)
 
     local source_name = "Неизвестно"
     local safe_who = who and who:valid() and who or nil
@@ -34,18 +45,18 @@ function on_actor_hit(power, impulse, dir, who, bone_index, space_restrictor, hi
             end
         end
     else
-        local ht = hit_type_map[hit_type or 0]
-        source_name = ht or ("Источник #" .. tostring(hit_type or 0))
+        local ht = hit_type_map[safe_hit_type]
+        source_name = ht or ("Источник #" .. tostring(safe_hit_type))
     end
 
-    local type_str = hit_type_map[hit_type or 0] or ("Тип " .. tostring(hit_type or 0))
+    local type_str = hit_type_map[safe_hit_type] or ("Тип " .. tostring(safe_hit_type))
 
-    table.insert(hit_log, { power = power, type = type_str, source = source_name })
+    table.insert(hit_log, { power = safe_power, type = type_str, source = source_name })
 end
 
 function on_actor_death()
     printf("[DAMAGE_TRACKER] Actor died. Entries in log: %d", #hit_log)
-    
+
     if #hit_log == 0 then
         hit_log = {}
         return
@@ -92,3 +103,7 @@ function on_actor_death()
     printf("[DAMAGE_TRACKER] Stats output finished.")
     hit_log = {}
 end
+
+-- Экспорт функций в глобальную область видимости для использования в bind_stalker.script
+_G.on_actor_hit = on_actor_hit
+_G.on_actor_death = on_actor_death
