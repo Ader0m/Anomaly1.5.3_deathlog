@@ -1,14 +1,14 @@
 -- damage_tracker.script
--- Минимальный логгер урона для отладки - БЕЗ ВЫЗОВА МЕТОДОВ
+-- Логирование урона актора
 
 local function safe_log(message)
-    print(message)
+    -- log() пишет в xray.log, print() только в консоль отладки
+    log(message)
 end
 
-safe_log("[DAMAGE_TRACKER] MODULE LOADED SUCCESSFULLY")
+safe_log(">>> DAMAGE TRACKER LOADED <<<")
 
 function on_actor_hit(power, impulse, dir, who, bone_index, space_restrictor, hit_type)
-    -- Логируем ТОЛЬКО через string.format (безопасная конкатенация)
     safe_log("[DAMAGE_TRACKER] CALLBACK FIRED")
 
     local p = tonumber(power) or 0
@@ -16,7 +16,6 @@ function on_actor_hit(power, impulse, dir, who, bone_index, space_restrictor, hi
 
     safe_log(string.format("[DAMAGE_TRACKER] Power: %.2f | Type: %d", p, t))
 
-    -- Источник через безопасный tostring
     if who then
         local ok, who_str = pcall(tostring, who)
         if ok then
@@ -35,6 +34,5 @@ function on_actor_death()
     safe_log("[DAMAGE_TRACKER] ACTOR DIED")
 end
 
--- Экспорт функций в глобальную область видимости
 _G.on_actor_hit = on_actor_hit
 _G.on_actor_death = on_actor_death
