@@ -1,1 +1,1 @@
-Nothing should be ignored based on the provided file changes. The only modified file is 'scripts/damage_tracker.script', which appears to be a source/script file and not a build artifact, dependency, or temporary file.
+Nothing should be ignored based on the provided file changes. The only modified file is 'scripts/damage_tracker.script', which appears to be a source script file and not a build artifact, dependency, or temporary file.
