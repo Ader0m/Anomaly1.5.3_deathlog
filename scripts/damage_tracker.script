@@ -28,6 +28,62 @@ end
 -- ИНТЕГРАЦИЯ С DAMAGE_MODIFIER.TXT: Маппинги и классификация урона
 -- ============================================================================
 
+-- Маппинг ID кости к категории части тела
+local bone_id_to_category = {
+    [0] = "head",      -- bip01_head
+    [6] = "torso",     -- bip01_pelvis
+    [7] = "torso",     -- bip01_spine (позвоночник/грудь)
+    [8] = "torso",     -- bip01_spine1 (нижняя часть спины)
+    [9] = "torso",     -- bip01_spine2 (верхняя часть спины/грудная клетка)
+    [13] = "arm",      -- bip01_l_clavicle / left arm
+    [14] = "arm",      -- bip01_r_clavicle / right arm
+    [15] = "arm",      -- bip01_l_upperarm
+    [16] = "arm",      -- bip01_r_upperarm
+    [17] = "arm",      -- bip01_l_lowerarm
+    [18] = "arm",      -- bip01_r_lowerarm
+    [19] = "arm",      -- bip01_l_hand
+    [20] = "arm",      -- bip01_r_hand
+    [21] = "leg",      -- bip01_l_thigh
+    [22] = "leg",      -- bip01_r_thigh
+    [23] = "leg",      -- bip01_l_calf
+    [24] = "leg",      -- bip01_r_calf
+    [25] = "leg",      -- bip01_l_foot
+    [26] = "leg"       -- bip01_r_foot
+}
+
+-- Маппинг ID кости к русскому названию
+local bone_id_to_name_ru = {
+    [0] = "Голова",
+    [6] = "Корпус",    -- таз
+    [7] = "Корпус",    -- позвоночник/грудь
+    [8] = "Корпус",    -- нижняя часть спины
+    [9] = "Корпус",    -- верхняя часть спины
+    [13] = "Рука",     -- левая рука (ключица)
+    [14] = "Рука",     -- правая рука (ключица)
+    [15] = "Рука",     -- левое плечо
+    [16] = "Рука",     -- правое плечо
+    [17] = "Рука",     -- левое предплечье
+    [18] = "Рука",     -- правое предплечье
+    [19] = "Рука",     -- левая кисть
+    [20] = "Рука",     -- правая кисть
+    [21] = "Нога",     -- левое бедро
+    [22] = "Нога",     -- правое бедро
+    [23] = "Нога",     -- левая голень
+    [24] = "Нога",     -- правая голень
+    [25] = "Нога",     -- левая ступня
+    [26] = "Нога"      -- правая ступня
+}
+
+-- Функция для получения категории кости
+local function get_bone_category(bone_id)
+    return bone_id_to_category[bone_id] or "limb"
+end
+
+-- Функция для получения русского названия кости
+local function get_bone_name_ru(bone_id)
+    return bone_id_to_name_ru[bone_id] or "Конечность"
+end
+
 -- Маппинг ID типа урона в категорию (из damage_modifier.txt)
 local damage_type_to_category = {
     [0] = "rupture",
@@ -293,6 +349,11 @@ function actor_on_before_hit_callback(s_hit, bone_id, flags)
     safe_log("[DAMAGE_TRACKER] Power: " .. safe_tostring(power) .. " | Hit Type: " .. safe_tostring(hit_type))
     safe_log("[DAMAGE_TRACKER] Bone ID: " .. safe_tostring(bone_id))
     
+    -- Получаем категорию и название кости
+    local bone_category = get_bone_category(bone_id)
+    local bone_name_ru = get_bone_name_ru(bone_id)
+    safe_log("[DAMAGE_TRACKER] Bone Category: " .. bone_category .. " | Bone Name (RU): " .. bone_name_ru)
+    
     -- Получаем имя источника для классификации
     local source_name = get_source_name(who)
     safe_log("[DAMAGE_TRACKER] Who (raw): " .. safe_tostring(source_name or "nil"))
@@ -386,10 +447,10 @@ function actor_on_before_hit_callback(s_hit, bone_id, flags)
     safe_log("[DAMAGE_TRACKER] DAMAGE CATEGORY: " .. damage_category)
 
     if who then
-        safe_log("[DAMAGE_TRACKER] CLASSIFIED HIT: [" .. damage_category .. "] from '" .. safe_tostring(display_name) .. "' - Power: " .. tostring(power))
+        safe_log("[DAMAGE_TRACKER] CLASSIFIED HIT: [" .. damage_category .. "] from '" .. safe_tostring(display_name) .. "' - Power: " .. tostring(power) .. " - Bone: " .. bone_name_ru)
     else
         safe_log("[DAMAGE_TRACKER] Source: Nil (environment/fall/etc)")
-        safe_log("[DAMAGE_TRACKER] CLASSIFIED HIT: [" .. damage_category .. "] from ENVIRONMENT - Power: " .. tostring(power))
+        safe_log("[DAMAGE_TRACKER] CLASSIFIED HIT: [" .. damage_category .. "] from ENVIRONMENT - Power: " .. tostring(power) .. " - Bone: " .. bone_name_ru)
     end
 
     safe_log("[DAMAGE_TRACKER] === END CLASSIFIED HIT ===")
