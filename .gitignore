@@ -1,29 +1,11 @@
-# Compiled and build artifacts
-*.pyc
-__pycache__/
-*.o
-*.obj
-*.class
-*.exe
-*.dll
-*.so
-*.a
-*.out
-
-# Dependencies
-.venv/
-venv/
-node_modules/
-dist/
-build/
-target/
-.gradle/
+```
+# Script-specific temporary files (if any)
+*.script~
 
 # Logs and temp files
 *.log
 *.tmp
 *.swp
-*.swo
 
 # Environment
 .env
@@ -33,20 +15,20 @@ target/
 # Editors
 .vscode/
 .idea/
-*.swp
-*.swo
 
-# System files
-.DS_Store
-Thumbs.db
+# Dependencies (if present)
+node_modules/
+venv/
+.venv/
+__pycache__/
+.mypy_cache/
+.pytest_cache/
+target/
+.gradle/
 
-# Coverage
+# Build artifacts (if present)
+dist/
+build/
 coverage/
 htmlcov/
-.coverage
-
-# MyPy
-.mypy_cache/
-
-# PyTest
-.pytest_cache/
+```
