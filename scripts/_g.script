@@ -45,9 +45,6 @@ require("lua_extensions")
 marshal = require "marshal"
 USE_MARSHAL = marshal ~= nil
 
--- Load damage tracker mod
-dofile("damage_tracker.script")
-
 ----------------------------------------------------------------------
 -- Global use
 ini_sys                  	= system_ini() 	-- global use for cached system_ini()
