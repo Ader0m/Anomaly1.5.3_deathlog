@@ -6,15 +6,18 @@ local function safe_tostring(val)
     if ok then return result else return "<error converting>" end
 end
 
--- Функция для безопасного вызова методов userdata
-local function safe_call_method(obj, method_name, ...)
+-- Функция для безопасного вызова методов userdata (без аргументов)
+local function safe_call_method(obj, method_name)
     if type(obj) ~= "userdata" then
         return false, nil
     end
     local ok, result = pcall(function()
-        return obj[method_name](obj, ...)
+        if obj[method_name] then
+            return obj[method_name](obj)
+        end
+        return nil
     end)
-    if ok then
+    if ok and result ~= nil then
         return true, result
     else
         return false, nil
@@ -59,12 +62,76 @@ function on_actor_hit(p1, p2, p3, p4, p5, p6, p7)
         bone_index = p1.bone_index or p1.bone or 0
         space_restrictor = p1.space_restrictor
         hit_type = p1.type or p1.hit_type or -1
+    elseif type(p1) == "userdata" then
+        -- Вариант 2: Первый параметр - это CHit объект (userdata)
+        safe_log("[DAMAGE_TRACKER] Detected CHIT OBJECT format (P1 is userdata)")
+
+        -- Извлекаем все данные из CHit объекта
+        local ok, val = safe_call_method(p1, "power")
+        if ok and type(val) == "number" then
+            power = val
+            safe_log("[DAMAGE_TRACKER] Extracted power from CHit: " .. tostring(power))
+        end
+
+        ok, val = safe_call_method(p1, "impulse")
+        if ok and type(val) == "number" then
+            impulse = val
+            safe_log("[DAMAGE_TRACKER] Extracted impulse from CHit: " .. tostring(impulse))
+        end
+
+        ok, val = safe_call_method(p1, "dir")
+        if ok then
+            dir = val
+            safe_log("[DAMAGE_TRACKER] Extracted dir from CHit: " .. safe_tostring(dir))
+        end
+
+        ok, val = safe_call_method(p1, "who")
+        if ok then
+            who = val
+            safe_log("[DAMAGE_TRACKER] Extracted who from CHit: " .. safe_tostring(who))
+        end
+
+        ok, val = safe_call_method(p1, "bone")
+        if ok and type(val) == "number" then
+            bone_index = val
+            safe_log("[DAMAGE_TRACKER] Extracted bone from CHit: " .. tostring(bone_index))
+        else
+            ok, val = safe_call_method(p1, "bone_index")
+            if ok and type(val) == "number" then
+                bone_index = val
+                safe_log("[DAMAGE_TRACKER] Extracted bone_index from CHit: " .. tostring(bone_index))
+            end
+        end
+
+        ok, val = safe_call_method(p1, "type")
+        if ok and type(val) == "number" then
+            hit_type = val
+            safe_log("[DAMAGE_TRACKER] Extracted hit_type from CHit: " .. tostring(hit_type))
+        else
+            ok, val = safe_call_method(p1, "hit_type")
+            if ok and type(val) == "number" then
+                hit_type = val
+                safe_log("[DAMAGE_TRACKER] Extracted hit_type from CHit: " .. tostring(hit_type))
+            end
+        end
+
+        ok, val = safe_call_method(p1, "space_restrictor")
+        if ok then
+            space_restrictor = val
+            safe_log("[DAMAGE_TRACKER] Extracted space_restrictor from CHit: " .. safe_tostring(space_restrictor))
+        end
+
+        -- Также пробуем получить данные из остальных параметров на случай если они дублируются
+        if type(p4) == "userdata" then
+            local ok, name = safe_call_method(p4, "name")
+            if ok and name then
+                safe_log("[DAMAGE_TRACKER] Who object name from P4: " .. tostring(name))
+            end
+        end
     else
-        -- Вариант 2: Параметры переданы по отдельности (стандартный вызов)
-        -- НО судя по логам: p1=power(userdata), p2=impulse(userdata), p3=dir(number), p4=who(userdata), p5=bone(userdata), p6=space_restrictor(number), p7=hit_type(nil)
-        -- Это значит что hit_type приходит последним и он nil, а dir и space_restrictor - числа
+        -- Вариант 3: Параметры переданы по отдельности (стандартный вызов)
         safe_log("[DAMAGE_TRACKER] Detected SEPARATE ARGS format")
-        
+
         -- Пробуем извлечь данные из userdata объектов
         -- P1 (power) - userdata, пробуем получить .power или это CHit объект
         if type(p1) == "userdata" then
@@ -79,7 +146,7 @@ function on_actor_hit(p1, p2, p3, p4, p5, p6, p7)
         elseif type(p1) == "number" then
             power = p1
         end
-        
+
         -- P2 (impulse) - userdata
         if type(p2) == "userdata" then
             local ok, val = safe_call_method(p2, "impulse")
@@ -90,7 +157,7 @@ function on_actor_hit(p1, p2, p3, p4, p5, p6, p7)
         elseif type(p2) == "number" then
             impulse = p2
         end
-        
+
         -- P3 (dir) - по логам это number (0.31...)
         if type(p3) == "number" then
             dir = p3
@@ -99,7 +166,7 @@ function on_actor_hit(p1, p2, p3, p4, p5, p6, p7)
             -- Может быть вектором, пробуем получить компоненты
             safe_log("[DAMAGE_TRACKER] Dir is userdata, trying to extract components...")
         end
-        
+
         -- P4 (who) - userdata (объект CObject)
         if type(p4) == "userdata" then
             who = p4
@@ -110,7 +177,7 @@ function on_actor_hit(p1, p2, p3, p4, p5, p6, p7)
                 safe_log("[DAMAGE_TRACKER] Who object exists but name() failed")
             end
         end
-        
+
         -- P5 (bone_index) - userdata
         if type(p5) == "userdata" then
             local ok, val = safe_call_method(p5, "bone")
@@ -128,13 +195,13 @@ function on_actor_hit(p1, p2, p3, p4, p5, p6, p7)
         elseif type(p5) == "number" then
             bone_index = p5
         end
-        
+
         -- P6 (space_restrictor) - по логам это number (20)
         if type(p6) == "number" then
             space_restrictor = p6
             safe_log("[DAMAGE_TRACKER] Space restrictor is number: " .. tostring(space_restrictor))
         end
-        
+
         -- P7 (hit_type) - по логам nil, значит hit_type не передаётся или порядок другой
         if p7 ~= nil then
             if type(p7) == "number" then

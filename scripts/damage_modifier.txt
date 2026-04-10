@@ -1,0 +1,1387 @@
+local mod_state = {
+    initialized = false,
+    callbacks_registered = false,
+    settings_cache = nil,
+    last_settings_check = 0,
+    initialization_attempts = 0,
+    last_successful_hit = 0,
+    gamma_environment = false,
+    pda_alerts_enabled = true,
+    last_notification_time = 0
+}
+
+local CACHE_REFRESH_INTERVAL = 1000
+local DEBUG_SPAM_INTERVAL = 500
+local CALLBACK_CHECK_INTERVAL = 3000
+local MAX_INIT_ATTEMPTS = 5
+local INIT_RETRY_DELAY = 0.5
+local NOTIFICATION_COOLDOWN = 3000 -- 3 seconds between notifications
+
+local last_debug_time = {}
+local game_loading = false
+local last_game_time = 0
+local custom_mappings = {}
+local registered_mods = {}
+local temp_settings = {}
+local reinitializing = false
+local keybind_instances = {}
+
+-- GAMMA Detection Functions
+local function detect_gamma_environment()
+    -- Method 1: Check for GAMMA-specific unlocalizer files
+    local gamma_detected = false
+    
+    -- Check for GAMMA-specific indicators in the environment
+    if _G and _G.gamma_support then
+        gamma_detected = true
+    end
+    
+    -- Check for GAMMA-specific MCM settings
+    if ui_mcm and ui_mcm.get then
+        local success, result = pcall(function()
+            return ui_mcm.get("gamma_compatibility_mode")
+        end)
+        if success and result ~= nil then
+            gamma_detected = true
+        end
+    end
+    
+    -- Check for GAMMA-specific script patterns
+    if _G and _G.gamma_scripts_loaded then
+        gamma_detected = true
+    end
+    
+    return gamma_detected
+end
+
+-- PDA Notification System
+local function show_pda_notification(message, notification_type)
+    local current_time = time_global()
+    
+    -- Check cooldown to prevent spam
+    if (current_time - mod_state.last_notification_time) < NOTIFICATION_COOLDOWN then
+        return
+    end
+    
+    local prefix = ""
+    local color = "255,255,255" -- Default white
+    
+    if notification_type == "error" then
+        prefix = "[UDM ERROR]"
+        color = "255,100,100" -- Red
+    elseif notification_type == "warning" then
+        prefix = "[UDM WARNING]"
+        color = "255,255,100" -- Yellow
+    elseif notification_type == "success" then
+        prefix = "[UDM SUCCESS]"
+        color = "100,255,100" -- Green
+    elseif notification_type == "info" then
+        prefix = "[UDM INFO]"
+        color = "100,200,255" -- Blue
+    end
+    
+    -- Console notification (always shown)
+    printf("%s %s", prefix, message)
+    
+    -- On-screen notification (if enabled)
+    if mod_state.pda_alerts_enabled then
+        -- Use printf for on-screen display (similar to PDA alerts)
+        printf("~%s~%s %s", color, prefix, message)
+    end
+    
+    mod_state.last_notification_time = current_time
+end
+
+-- Enhanced initialization with GAMMA compatibility
+local function initialize_mod()
+    mod_state.initialization_attempts = mod_state.initialization_attempts + 1
+    
+    -- Detect GAMMA environment
+    mod_state.gamma_environment = detect_gamma_environment()
+    
+    if mod_state.gamma_environment then
+        show_pda_notification("GAMMA environment detected - applying compatibility optimizations", "info")
+    end
+    
+    mod_state.callbacks_registered = false
+    mod_state.settings_cache = nil
+    mod_state.last_settings_check = 0
+    last_debug_time = {}
+    
+    local success_count = 0
+    local callbacks = {
+        {"actor_on_before_hit", actor_on_before_hit, true},
+        {"on_option_change", on_option_change, false},
+        {"save_state", on_save_state, false},
+        {"load_state", on_load_state, false}
+    }
+    
+    -- GAMMA-specific callback registration with retry logic
+    local max_retries = mod_state.gamma_environment and 3 or 1
+    local retry_delay = mod_state.gamma_environment and 0.1 or 0
+    
+    for _, callback_info in ipairs(callbacks) do
+        local name, func, essential = callback_info[1], callback_info[2], callback_info[3]
+        local registered = false
+        
+        for attempt = 1, max_retries do
+            local success, error_msg = pcall(function()
+                RegisterScriptCallback(name, func)
+            end)
+            
+            if success then
+                success_count = success_count + 1
+                registered = true
+                break
+            elseif attempt < max_retries then
+                -- Wait before retry (GAMMA-specific)
+                if retry_delay > 0 then
+                    CreateTimeEvent("udm_callback_retry_" .. name, "delayed", retry_delay, function()
+                        local retry_success, retry_error = pcall(function()
+                            RegisterScriptCallback(name, func)
+                        end)
+                        if retry_success then
+                            printf("UDM: Successfully registered %s on retry", name)
+                        end
+                        return true
+                    end)
+                end
+            else
+                if essential then
+                    printf("UDM Error: Failed to register essential callback %s after %d attempts: %s", name, max_retries, tostring(error_msg))
+                    show_pda_notification("Failed to initialize critical components - mod may not work properly", "error")
+                    return false
+                else
+                    printf("UDM Warning: Failed to register optional callback %s after %d attempts: %s", name, max_retries, tostring(error_msg))
+                end
+            end
+        end
+    end
+    
+    -- Fix: Use correct callback name for level changes
+    local level_change_success, level_change_error = pcall(function()
+        RegisterScriptCallback("on_level_changing", on_level_change)
+    end)
+    
+    if level_change_success then
+        success_count = success_count + 1
+    else
+        printf("UDM Warning: Failed to register level change callback: %s", tostring(level_change_error))
+    end
+    
+    local mcm_available = check_mcm_availability()
+    
+    mod_state.callbacks_registered = (success_count >= 1)
+    mod_state.initialized = mod_state.callbacks_registered
+    
+    if mod_state.initialized then
+        printf("UDM: Successfully initialized with " .. success_count .. " callbacks registered")
+        if mod_state.gamma_environment then
+            show_pda_notification("UDM successfully initialized with GAMMA compatibility", "success")
+        else
+            show_pda_notification("UDM successfully initialized", "success")
+        end
+    else
+        printf("UDM Error: Failed to initialize - only " .. success_count .. " callbacks registered")
+        show_pda_notification("UDM failed to initialize - press F11 to retry", "error")
+    end
+    
+    return mod_state.initialized
+end
+
+-- Enhanced reinitialization with notifications
+local function safe_reinitialize()
+    if reinitializing then return end
+    reinitializing = true
+    
+    show_pda_notification("Reinitializing UDM...", "info")
+    
+    CreateTimeEvent("udm_reinit", "delayed_init", INIT_RETRY_DELAY, function()
+        initialize_mod()
+        reinitializing = false
+        return true
+    end)
+end
+
+-- InputManager class for handling configurable keybinds
+class "UDMInputManager"
+
+function UDMInputManager:__init(id, settings)
+    self.id = id
+    self.settings = settings
+    self.modes = {
+        [0] = { 
+            call = "on_key_press", 
+            action = function(key) 
+                if ui_mcm and ui_mcm.simple_press then
+                    ui_mcm.simple_press("udm_" .. id, key, function() 
+                        self:execute_action()
+                    end)
+                else
+                    self:execute_action()
+                end
+            end 
+        },
+        [1] = { 
+            call = "on_key_press", 
+            action = function(key) 
+                if ui_mcm and ui_mcm.double_tap then
+                    if ui_mcm.double_tap("udm_" .. id, key) then 
+                        self:execute_action()
+                    end
+                else
+                    self:execute_action()
+                end
+            end 
+        },
+        [2] = { 
+            call = "on_key_hold", 
+            action = function(key) 
+                if ui_mcm and ui_mcm.key_hold then
+                    if ui_mcm.key_hold("udm_" .. id, key) then 
+                        self:execute_action()
+                    end
+                else
+                    self:execute_action()
+                end
+            end 
+        }
+    }
+    
+    if self.modes[self.settings.mode] then
+        RegisterScriptCallback(self.modes[self.settings.mode].call, self)
+    end
+end
+
+function UDMInputManager:execute_action()
+    if self.id == "debug_status" then
+        udm_debug_status()
+    elseif self.id == "force_reinit" then
+        udm_force_reinit()
+    end
+end
+
+function UDMInputManager:on_key_press(key)
+    if key ~= self.settings.key then return end
+    if ui_mcm and ui_mcm.get_mod_key then
+        if ui_mcm.get_mod_key(self.settings.modifier) then
+            self.modes[self.settings.mode].action(key)
+        end
+    else
+        -- Fallback: no modifier check
+        self.modes[self.settings.mode].action(key)
+    end
+end
+
+function UDMInputManager:on_key_hold(key)
+    if key ~= self.settings.key then return end
+    if ui_mcm and ui_mcm.get_mod_key then
+        if ui_mcm.get_mod_key(self.settings.modifier) then
+            self.modes[self.settings.mode].action(key)
+        end
+    else
+        -- Fallback: no modifier check
+        self.modes[self.settings.mode].action(key)
+    end
+end
+
+function UDMInputManager:destroy()
+    if self.modes[self.settings.mode] then
+        UnregisterScriptCallback(self.modes[self.settings.mode].call, self)
+    end
+end
+
+function UDMInputManager:update_settings(new_settings)
+    self:destroy()
+    self.settings = new_settings
+    if self.modes[self.settings.mode] then
+        RegisterScriptCallback(self.modes[self.settings.mode].call, self)
+    end
+end
+
+local exact_source_mappings = {
+    -- BURN DAMAGE
+    ["zone_zhar"] = "burn",
+    ["zone_field_thermal"] = "burn",
+    ["zone_field_thermal_average"] = "burn",
+    ["zone_field_thermal_strong"] = "burn",
+    ["zone_field_thermal_weak"] = "burn",
+    ["zone_field_thermal_below_average"] = "burn",
+    ["yan_zone_field_thermal_average"] = "burn",
+    ["yan_zone_field_thermal_strong"] = "burn",
+    ["yan_zone_field_thermal_weak"] = "burn",
+    ["yan_zone_field_thermal_below_average"] = "burn",
+    ["zone_mine_thermal"] = "burn",
+    ["zone_mine_thermal_average"] = "burn",
+    ["zone_mine_thermal_strong"] = "burn",
+    ["zone_mine_thermal_weak"] = "burn",
+    ["zone_mine_thermal_below_average"] = "burn",
+    ["yan_zone_mine_thermal_average"] = "burn",
+    ["yan_zone_mine_thermal_strong"] = "burn",
+    ["yan_zone_mine_thermal_weak"] = "burn",
+    ["yan_zone_mine_thermal_below_average"] = "burn",
+    ["fireball_zone"] = "burn",
+    ["fireball_thermal_zone"] = "burn",
+    ["generator_dust"] = "burn",
+    ["generator_torrid"] = "burn",
+    ["burer_fire"] = "burn",
+    ["torrid"] = "burn",
+    ["thermal"] = "burn",
+    ["fire"] = "burn",
+    ["burn"] = "burn",
+    ["flame"] = "burn",
+    ["heat"] = "burn",
+    ["hot"] = "burn",
+    ["scorch"] = "burn",
+    ["campfire_base"] = "burn",
+    ["campfire_base_noshadow"] = "burn",
+    
+    -- CHEMICAL DAMAGE
+    ["zone_field_acidic"] = "chemical",
+    ["zone_field_acidic_average"] = "chemical",
+    ["zone_field_acidic_strong"] = "chemical",
+    ["zone_field_acidic_weak"] = "chemical",
+    ["zone_field_acidic_below_average"] = "chemical",
+    ["yan_zone_field_acidic_average"] = "chemical",
+    ["yan_zone_field_acidic_strong"] = "chemical",
+    ["yan_zone_field_acidic_weak"] = "chemical",
+    ["yan_zone_field_acidic_below_average"] = "chemical",
+    ["zone_mine_acidic"] = "chemical",
+    ["zone_mine_acidic_average"] = "chemical",
+    ["zone_mine_acidic_strong"] = "chemical",
+    ["zone_mine_acidic_weak"] = "chemical",
+    ["zone_mine_acidic_below_average"] = "chemical",
+    ["yan_zone_mine_acidic_average"] = "chemical",
+    ["yan_zone_mine_acidic_strong"] = "chemical",
+    ["yan_zone_mine_acidic_weak"] = "chemical",
+    ["yan_zone_mine_acidic_below_average"] = "chemical",
+    ["fireball_acidic_zone"] = "chemical",
+    ["zone_burning_fuzz"] = "chemical",
+    ["zone_liana"] = "chemical",
+    ["sr_psy_antenna@def"] = "chemical",
+    ["sr_psy_antenna"] = "chemical",
+    ["acidic"] = "chemical",
+    ["chemical"] = "chemical",
+    ["acid"] = "chemical",
+    ["toxic"] = "chemical",
+    ["poison"] = "chemical",
+    ["corros"] = "chemical",
+    ["chem"] = "chemical",
+    ["liana"] = "chemical",
+    ["fuzz"] = "chemical",
+    
+    -- ELECTRICAL DAMAGE
+    ["zone_field_electric"] = "electrical",
+    ["zone_field_electric_average"] = "electrical",
+    ["zone_field_electric_strong"] = "electrical",
+    ["zone_field_electric_weak"] = "electrical",
+    ["zone_field_electric_below_average"] = "electrical",
+    ["yan_zone_field_electric_average"] = "electrical",
+    ["yan_zone_field_electric_strong"] = "electrical",
+    ["yan_zone_field_electric_weak"] = "electrical",
+    ["yan_zone_field_electric_below_average"] = "electrical",
+    ["zone_mine_electric"] = "electrical",
+    ["zone_mine_electric_average"] = "electrical",
+    ["zone_mine_electric_strong"] = "electrical",
+    ["zone_mine_electric_weak"] = "electrical",
+    ["zone_mine_electric_below_average"] = "electrical",
+    ["yan_zone_mine_electric_average"] = "electrical",
+    ["yan_zone_mine_electric_strong"] = "electrical",
+    ["yan_zone_mine_electric_weak"] = "electrical",
+    ["yan_zone_mine_electric_below_average"] = "electrical",
+    ["fireball_electric_zone"] = "electrical",
+    ["generator_dust_static"] = "electrical",
+    ["generator_electra"] = "electrical",
+    ["zone_no_gravity"] = "electrical",
+    ["electr"] = "electrical",
+    ["shock"] = "electrical",
+    ["tesla"] = "electrical",
+    ["spark"] = "electrical",
+    ["volt"] = "electrical",
+    ["electric"] = "electrical",
+    ["static"] = "electrical",
+    
+    -- RADIATION DAMAGE
+    ["zone_field_radioactive"] = "radiation",
+    ["zone_field_radioactive_average"] = "radiation",
+    ["zone_field_radioactive_strong"] = "radiation",
+    ["zone_field_radioactive_weak"] = "radiation",
+    ["zone_field_radioactive_below_average"] = "radiation",
+    ["yan_zone_field_radioactive_average"] = "radiation",
+    ["yan_zone_field_radioactive_strong"] = "radiation",
+    ["yan_zone_field_radioactive_weak"] = "radiation",
+    ["yan_zone_field_radioactive_below_average"] = "radiation",
+    ["zone_mine_radioactive"] = "radiation",
+    ["zone_mine_radioactive_average"] = "radiation",
+    ["zone_mine_radioactive_strong"] = "radiation",
+    ["zone_mine_radioactive_weak"] = "radiation",
+    ["zone_mine_radioactive_below_average"] = "radiation",
+    ["yan_zone_mine_radioactive_average"] = "radiation",
+    ["yan_zone_mine_radioactive_strong"] = "radiation",
+    ["yan_zone_mine_radioactive_weak"] = "radiation",
+    ["yan_zone_mine_radioactive_below_average"] = "radiation",
+    ["zone_radioactive_below_average"] = "radiation",
+    ["yan_zone_radioactive_below_average"] = "radiation",
+    ["radioactive"] = "radiation",
+    ["radiation"] = "radiation",
+    ["rad"] = "radiation",
+    ["atom"] = "radiation",
+    ["nuclear"] = "radiation",
+    
+    -- PSYCHIC DAMAGE
+    ["zone_field_psychic"] = "psy",
+    ["zone_field_psychic_average"] = "psy",
+    ["zone_field_psychic_strong"] = "psy",
+    ["zone_field_psychic_weak"] = "psy",
+    ["zone_field_psychic_below_average"] = "psy",
+    ["yan_zone_field_psychic_average"] = "psy",
+    ["yan_zone_field_psychic_strong"] = "psy",
+    ["yan_zone_field_psychic_weak"] = "psy",
+    ["yan_zone_field_psychic_below_average"] = "psy",
+    ["zone_monolith"] = "psy",
+    ["psy_dog_phantom"] = "psy",
+    ["burer_electra"] = "psy",
+    ["m_poltergeist_e"] = "psy",
+    ["m_controller_e"] = "psy",
+    ["m_burer_e"] = "psy",
+    ["psychic"] = "psy",
+    ["brain"] = "psy",
+    ["mental"] = "psy",
+    ["telepatic"] = "psy",
+    ["monolith"] = "psy",
+    ["controller"] = "psy",
+    ["burer"] = "psy",
+    ["phantom"] = "psy",
+    ["scorcher"] = "psy",
+    ["poltergeist_build"] = "psy",
+    
+    -- BALLISTIC DAMAGE (NPCs and weapons)
+    ["m_izgoy"] = "ballistic",
+    ["wpn_"] = "ballistic",
+    ["mounted_weapon"] = "ballistic",
+    ["pri_a17_gauss_rifle"] = "ballistic",
+    ["stalker"] = "ballistic",
+    ["weapon"] = "ballistic",
+    ["bullet"] = "ballistic",
+    ["shot"] = "ballistic",
+    ["gun"] = "ballistic",
+    ["rifle"] = "ballistic",
+    ["pistol"] = "ballistic",
+    ["sniper"] = "ballistic",
+    
+    -- RUPTURE DAMAGE (melee and mutants)
+    ["cat_test"] = "rupture",
+    ["fracture_normal"] = "rupture",
+    ["gigant_jumper"] = "rupture",
+    ["m_bibliotekar_e"] = "rupture",
+    ["m_bloodsucker_e"] = "rupture",
+    ["m_boar_e"] = "rupture",
+    ["m_borya_e"] = "rupture",
+    ["m_chimera_e"] = "rupture",
+    ["m_dog_e"] = "rupture",
+    ["m_gigant_e"] = "rupture",
+    ["m_lurker_e"] = "rupture",
+    ["m_pseudodog_e"] = "rupture",
+    ["m_rat_e"] = "rupture",
+    ["m_snork_e"] = "rupture",
+    ["m_tushkano_e"] = "rupture",
+    ["rotan"] = "rupture",
+    ["zombie_protections"] = "rupture",
+    ["zombie_weak"] = "rupture",
+    ["wpn_axe"] = "rupture",
+    ["wpn_axe2"] = "rupture",
+    ["wpn_axe3"] = "rupture",
+    ["wpn_knife"] = "rupture",
+    ["wpn_knife2"] = "rupture",
+    ["wpn_knife3"] = "rupture",
+    ["wpn_knife4"] = "rupture",
+    ["wpn_knife5"] = "rupture",
+    ["wpn_knife_mp"] = "rupture",
+    ["wpn_upd"] = "rupture",
+    
+    -- GRAVITATIONAL DAMAGE
+    ["zone_mine_gravitational"] = "gravitational",
+    ["zone_mine_gravitational_average"] = "gravitational",
+    ["zone_mine_gravitational_strong"] = "gravitational",
+    ["zone_mine_gravitational_weak"] = "gravitational",
+    ["zone_mine_gravitational_below_average"] = "gravitational",
+    ["yan_zone_mine_gravitational_average"] = "gravitational",
+    ["yan_zone_mine_gravitational_strong"] = "gravitational",
+    ["yan_zone_mine_gravitational_weak"] = "gravitational",
+    ["yan_zone_mine_gravitational_below_average"] = "gravitational",
+    ["gravitational"] = "gravitational",
+    ["gravity"] = "gravitational",
+    
+    -- EXPLOSIVE DAMAGE
+    ["wpn_rpg7"] = "explosive",
+    ["wpn_rg-6"] = "explosive",
+    ["wpn_m79"] = "explosive",
+    ["zone_mine_field"] = "explosive",
+    ["zone_mine_field_soc"] = "explosive",
+    ["yan_zone_mine_field"] = "explosive",
+    ["yan_zone_mine_field_soc"] = "explosive",
+    ["explosive"] = "explosive",
+    ["explosion"] = "explosive",
+    ["blast"] = "explosive",
+    ["grenade"] = "explosive",
+    
+    -- IMPACT DAMAGE
+    ["zone_emi"] = "impact",
+    ["zone_hvatalka"] = "impact",
+    ["zone_mosquito_bald"] = "impact",
+    ["zone_sarcofag"] = "impact",
+    ["zone_student"] = "impact",
+    ["zone_teleport"] = "impact",
+    ["kinetic"] = "impact",
+    ["strike"] = "impact",
+    ["teleport"] = "impact",
+    ["hvatalka"] = "impact",
+    ["mosquito"] = "impact",
+    ["sarcofag"] = "impact",
+    ["student"] = "impact",
+    ["zone"] = "impact",
+    ["anomaly"] = "impact",
+    ["field"] = "impact"
+}
+
+local source_patterns = {
+    -- Specific patterns first (highest priority)
+    burn = {
+        "zone_field_thermal", "zone_mine_thermal", "fireball_thermal", "fireball_zone", "generator_dust", "generator_torrid", "zone_zhar",
+        "burer_fire", "torrid", "thermal", "fire", "burn", "flame", "heat", "hot", "scorch", "fireball"
+    },
+    chemical = {
+        "zone_field_acidic", "zone_mine_acidic", "fireball_acidic", "zone_burning_fuzz", "zone_liana", 
+        "sr_psy_antenna", "acidic", "chemical", "acid", 
+        "toxic", "poison", "corros", "chem", "liana", "fuzz", "fireball_acidic"
+    },
+    electrical = {
+        "zone_field_electric", "zone_mine_electric", "fireball_electric", "generator_dust_static", "generator_electra", 
+        "zone_no_gravity", "electr", 
+        "shock", "tesla", "spark", "volt", "electric", "static", "fireball_electric"
+    },
+    radiation = {
+        "zone_field_radioactive", "zone_mine_radioactive", "radioactive", "radiation", "rad", "atom", "nuclear"
+    },
+    psy = {
+        "zone_field_psychic", "zone_monolith", "psy_dog_phantom", 
+        "burer_electra", "m_poltergeist", 
+        "m_controller", "m_burer", "poltergeist",
+        "psychic", "brain", "mental", "telepatic", "monolith",
+        "controller", "burer", "phantom", "scorcher"
+    },
+    ballistic = {
+        "wpn_", "mounted_weapon", "pri_a17_gauss_rifle", "m_izgoy", "stalker",
+        "weapon", "bullet", "shot", "gun", "rifle", "pistol", "sniper"
+    },
+    rupture = {
+        "cat_test", "fracture_normal", "gigant_jumper", "m_bibliotekar", 
+        "m_bloodsucker", "m_boar", "m_borya", "m_chimera", "m_dog", 
+        "m_gigant", "m_lurker", "m_pseudodog", "m_rat", "m_snork", 
+        "m_tushkano", "rotan", "zombie",
+        "wpn_axe", "wpn_knife", "wpn_upd", 
+        "mutant", "creature", "claw", "bite", "knife", "axe", "cut", "slash"
+    },
+    gravitational = {
+        "zone_mine_gravitational", "gravitational", "gravity"
+    },
+    explosive = {
+        "zone_mine_field", "wpn_rpg7", "wpn_rg-6", "wpn_m79", 
+        "explosive", "explosion", "blast", "grenade"
+    },
+    -- Generic patterns last (lowest priority)
+    impact = {
+        "zone_emi", "zone_hvatalka", "zone_mosquito_bald", "zone_sarcofag", 
+        "zone_student", "zone_teleport", "kinetic", "strike", "teleport", 
+        "hvatalka", "mosquito", "sarcofag", "student", "zone", "anomaly", "field"
+    }
+}
+
+local damage_type_to_category = {
+    [0] = "rupture",
+    [1] = "burn",
+    [2] = "electrical",
+    [3] = "impact",
+    [4] = "explosive",
+    [5] = "ballistic",
+    [6] = "chemical",
+    [7] = "radiation",
+    [8] = "psy",
+    [9] = "burn",
+    [10] = "chemical",
+    [11] = "burn",
+    [12] = "impact"
+}
+
+local function validate_mod_state()
+    if mod_state.initialized and not mod_state.callbacks_registered then
+        mod_state.initialized = false
+        return false
+    end
+    return mod_state.initialized
+end
+
+function check_mcm_availability()
+    if not ui_mcm then return false end
+    if not ui_mcm.get then return false end
+    
+    local success, result = pcall(function()
+        return ui_mcm.get("dmg_mod_settings/debug_mode")
+    end)
+    
+    return success and result ~= nil
+end
+
+local function detect_game_loading()
+    local current_time = time_global()
+    
+    if last_game_time > 0 and (current_time - last_game_time) > 5000 then
+        game_loading = true
+    else
+        game_loading = false
+    end
+    
+    last_game_time = current_time
+end
+
+local function ensure_callbacks_active()
+    detect_game_loading()
+    
+    local current_time = time_global()
+    local check_interval = game_loading and 1000 or CALLBACK_CHECK_INTERVAL
+    
+    if (current_time - mod_state.last_settings_check) > check_interval then
+        local mcm_test = check_mcm_availability()
+        
+        local time_since_last_hit = current_time - mod_state.last_successful_hit
+        if not mcm_test or (not validate_mod_state() and time_since_last_hit > 10000) then
+            if mod_state.initialization_attempts < MAX_INIT_ATTEMPTS then
+                safe_reinitialize()
+            else
+                printf("UDM Warning: Max initialization attempts reached")
+            end
+        end
+        
+        mod_state.last_settings_check = current_time
+    end
+end
+
+function get_mcm_settings()
+    ensure_callbacks_active()
+    
+    local current_time = time_global()
+    
+    if mod_state.settings_cache and (current_time - mod_state.last_settings_check) < CACHE_REFRESH_INTERVAL then
+        return mod_state.settings_cache
+    end
+    
+    for k in pairs(temp_settings) do
+        temp_settings[k] = nil
+    end
+    
+    local defaults = {
+        ballistic_enabled = true, ballistic_modifier = 100,
+        burn_enabled = true, burn_modifier = 100,
+        electrical_enabled = true, electrical_modifier = 100,
+        chemical_enabled = true, chemical_modifier = 100,
+        radiation_enabled = true, radiation_modifier = 100,
+        psy_enabled = true, psy_modifier = 100,
+        rupture_enabled = true, rupture_modifier = 100,
+        impact_enabled = true, impact_modifier = 100,
+        gravitational_enabled = true, gravitational_modifier = 100,
+        explosive_enabled = true, explosive_modifier = 100,
+        other_enabled = true, other_modifier = 100,
+        debug_mode = false,
+        pda_alerts_enabled = false
+    }
+    
+    for key, default_value in pairs(defaults) do
+        temp_settings[key] = default_value
+    end
+    
+    if ui_mcm and ui_mcm.get then
+        for key, default_value in pairs(defaults) do
+            local success, result = pcall(function()
+                return ui_mcm.get("dmg_mod_settings/" .. key)
+            end)
+            
+            if success and result ~= nil then
+                temp_settings[key] = result
+            else
+                break
+            end
+        end
+    end
+    
+    mod_state.settings_cache = {}
+    for key, value in pairs(temp_settings) do
+        mod_state.settings_cache[key] = value
+    end
+    
+    -- Update PDA alerts setting
+    mod_state.pda_alerts_enabled = temp_settings.pda_alerts_enabled
+    
+    mod_state.last_settings_check = current_time
+    
+    return mod_state.settings_cache
+end
+
+function register_damage_mapping(damage_type, category, mod_name)
+    custom_mappings[damage_type] = category
+    if mod_name then
+        registered_mods[mod_name] = true
+    end
+end
+
+function check_source_patterns(source_lower, source_name)
+    -- First check exact source mappings (highest priority)
+    if exact_source_mappings[source_name] then
+        if ui_mcm and ui_mcm.get and ui_mcm.get("dmg_mod_settings/debug_mode") then
+            printf("UDM Debug: Exact match found for '%s' -> %s", source_name, exact_source_mappings[source_name])
+        end
+        return exact_source_mappings[source_name]
+    end
+    
+    -- UNIVERSAL PATTERN MATCHING: Check for base patterns that work across all maps
+    -- This catches map-specific anomalies like yan_zone_field_thermal, pri_zone_field_thermal, etc.
+    local universal_patterns = {
+        -- Thermal zones (burn damage) - any map prefix
+        {pattern = "zone_field_thermal", category = "burn"},
+        {pattern = "zone_mine_thermal", category = "burn"},
+        {pattern = "fireball_thermal", category = "burn"},
+        {pattern = "generator_torrid", category = "burn"},
+        {pattern = "burer_fire", category = "burn"},
+        
+        -- Acidic zones (chemical damage) - any map prefix
+        {pattern = "zone_field_acidic", category = "chemical"},
+        {pattern = "zone_mine_acidic", category = "chemical"},
+        {pattern = "fireball_acidic", category = "chemical"},
+        {pattern = "zone_burning_fuzz", category = "chemical"},
+        {pattern = "zone_liana", category = "chemical"},
+        {pattern = "sr_psy_antenna", category = "chemical"},
+        
+        -- Electric zones (electrical damage) - any map prefix
+        {pattern = "zone_field_electric", category = "electrical"},
+        {pattern = "zone_mine_electric", category = "electrical"},
+        {pattern = "fireball_electric", category = "electrical"},
+        {pattern = "generator_electra", category = "electrical"},
+        {pattern = "zone_no_gravity", category = "electrical"},
+        
+        -- Radioactive zones (radiation damage) - any map prefix
+        {pattern = "zone_field_radioactive", category = "radiation"},
+        {pattern = "zone_mine_radioactive", category = "radiation"},
+        {pattern = "zone_radioactive", category = "radiation"},
+        
+        -- Psychic zones (psy damage) - any map prefix
+        {pattern = "zone_field_psychic", category = "psy"},
+        {pattern = "zone_monolith", category = "psy"},
+        {pattern = "psy_dog_phantom", category = "psy"},
+        {pattern = "m_controller", category = "psy"},
+        {pattern = "m_burer", category = "psy"},
+        {pattern = "burer_electra", category = "psy"},
+        
+        -- Gravitational zones (gravitational damage) - any map prefix
+        {pattern = "zone_mine_gravitational", category = "gravitational"},
+        
+        -- Explosive zones (explosive damage) - any map prefix
+        {pattern = "zone_mine_field", category = "explosive"},
+        {pattern = "wpn_rpg", category = "explosive"},
+        {pattern = "wpn_rg", category = "explosive"},
+        {pattern = "wpn_m79", category = "explosive"},
+        
+        -- Impact zones (impact damage) - any map prefix
+        {pattern = "zone_emi", category = "impact"},
+        {pattern = "zone_hvatalka", category = "impact"},
+        {pattern = "zone_mosquito", category = "impact"},
+        {pattern = "zone_sarcofag", category = "impact"},
+        {pattern = "zone_student", category = "impact"},
+        {pattern = "zone_teleport", category = "impact"},
+        
+        -- Melee/mutant damage (rupture damage) - any map prefix
+        {pattern = "m_bloodsucker", category = "rupture"},
+        {pattern = "m_boar", category = "rupture"},
+        {pattern = "m_chimera", category = "rupture"},
+        {pattern = "m_dog", category = "rupture"},
+        {pattern = "m_gigant", category = "rupture"},
+        {pattern = "m_lurker", category = "rupture"},
+        {pattern = "m_pseudodog", category = "rupture"},
+        {pattern = "m_rat", category = "rupture"},
+        {pattern = "m_snork", category = "rupture"},
+        {pattern = "m_tushkano", category = "rupture"},
+        {pattern = "wpn_axe", category = "rupture"},
+        {pattern = "wpn_knife", category = "rupture"},
+        
+        -- Weapon damage (ballistic damage) - any map prefix
+        {pattern = "wpn_", category = "ballistic"},
+        {pattern = "mounted_weapon", category = "ballistic"},
+        {pattern = "pri_a17_gauss_rifle", category = "ballistic"},
+        {pattern = "stalker", category = "ballistic"}
+    }
+    
+    -- Check universal patterns (second priority)
+    for _, pattern_data in ipairs(universal_patterns) do
+        if string.find(source_lower, pattern_data.pattern, 1, true) then
+            if ui_mcm and ui_mcm.get and ui_mcm.get("dmg_mod_settings/debug_mode") then
+                printf("UDM Debug: Universal pattern match found: '%s' matches '%s' -> %s", source_lower, pattern_data.pattern, pattern_data.category)
+            end
+            return pattern_data.category
+        end
+    end
+    
+    -- Then check for partial matches in exact source mappings (third priority)
+    for exact_name, category in pairs(exact_source_mappings) do
+        if string.find(source_lower, exact_name, 1, true) then
+            if ui_mcm and ui_mcm.get and ui_mcm.get("dmg_mod_settings/debug_mode") then
+                printf("UDM Debug: Partial exact match found: '%s' contains '%s' -> %s", source_lower, exact_name, category)
+            end
+            return category
+        end
+    end
+    
+    -- Finally check pattern matching in priority order (lowest priority)
+    local priority_order = {"chemical", "burn", "electrical", "radiation", "psy", "ballistic", "rupture", "gravitational", "explosive", "impact"}
+    
+    for _, category in ipairs(priority_order) do
+        local patterns = source_patterns[category]
+        if patterns then
+            for i = 1, #patterns do
+                if string.find(source_lower, patterns[i], 1, true) then
+                    if ui_mcm and ui_mcm.get and ui_mcm.get("dmg_mod_settings/debug_mode") then
+                        printf("UDM Debug: Pattern match found: '%s' matches pattern '%s' -> %s", source_lower, patterns[i], category)
+                    end
+                    return category
+                end
+            end
+        end
+    end
+    
+    if ui_mcm and ui_mcm.get and ui_mcm.get("dmg_mod_settings/debug_mode") then
+        printf("UDM Debug: No pattern match found for '%s'", source_lower)
+    end
+    
+    return nil
+end
+
+-- Function to detect if damage is from a weapon/bullet based on damage object properties
+function is_weapon_damage(shit, source_name, settings)
+    if not shit then
+        return false
+    end
+    
+    -- Check if this is explicitly ballistic damage type
+    if shit.type_id == 5 then
+        if settings and settings.debug_mode then
+            printf("UDM Debug: Weapon damage detected via type_id = 5 (ballistic)")
+        end
+        return true
+    end
+    
+    -- Check if the damage object has weapon-specific properties
+    if shit.weapon_id or shit.ammo_type or shit.bullet_id then
+        if settings and settings.debug_mode then
+            printf("UDM Debug: Weapon damage detected via weapon properties")
+        end
+        return true
+    end
+    
+    -- Check if the damage has high impulse relative to power (typical of bullets)
+    if shit.impulse and shit.power and shit.impulse > 0 and shit.power > 0 then
+        local impulse_power_ratio = shit.impulse / shit.power
+        -- Bullets typically have high impulse relative to power
+        if impulse_power_ratio > 2.0 then
+            if settings and settings.debug_mode then
+                printf("UDM Debug: Weapon damage detected via impulse/power ratio: %.2f", impulse_power_ratio)
+            end
+            return true
+        end
+    end
+    
+    -- Check if the source is a living entity (NPC) and damage type is 0 (default)
+    -- This catches cases where HACR changes damage_type but the source is clearly an NPC
+    if shit.type_id == 0 and shit.draftsman then
+        local draftsman = shit.draftsman
+        
+        -- Check if draftsman is a living entity (not an anomaly/zone)
+        if draftsman and draftsman.health and draftsman.health > 0 then
+            -- Check if draftsman has weapon-related properties
+            if draftsman.active_item and draftsman.active_item:section() then
+                local weapon_section = draftsman.active_item:section()
+                if string.find(weapon_section, "wpn_", 1, true) then
+                    if settings and settings.debug_mode then
+                        printf("UDM Debug: Weapon damage detected via active weapon: %s", weapon_section)
+                    end
+                    return true
+                end
+            end
+            
+            -- Check if draftsman is a humanoid NPC (not a mutant) using correct vanilla community names
+            if draftsman.character_community then
+                local community = draftsman:character_community()
+                if community then
+                    -- Main factions that use weapons (including zombified versions)
+                    local weapon_factions = {
+                        "stalker", "duty", "freedom", "ecolog", "monolith", "clear_sky", 
+                        "renegade", "sin", "army", "military", "killer", "bandit", "dolg",
+                        "csky", "greh", "isg"
+                    }
+                    
+                    -- Check if this is a weapon-using faction
+                    for _, faction in ipairs(weapon_factions) do
+                        if community == faction then
+                            if settings and settings.debug_mode then
+                                printf("UDM Debug: Weapon damage detected via humanoid NPC community: %s", community)
+                            end
+                            return true
+                        end
+                    end
+                    
+                    -- Check for actor variants (player faction versions)
+                    if string.find(community, "actor_", 1, true) then
+                        local base_faction = string.gsub(community, "actor_", "")
+                        for _, faction in ipairs(weapon_factions) do
+                            if base_faction == faction then
+                                if settings and settings.debug_mode then
+                                    printf("UDM Debug: Weapon damage detected via actor faction: %s (base: %s)", community, base_faction)
+                                end
+                                return true
+                            end
+                        end
+                    end
+                    
+                    -- Special case: traders can also use weapons
+                    if community == "trader" then
+                        if settings and settings.debug_mode then
+                            printf("UDM Debug: Weapon damage detected via trader community")
+                        end
+                        return true
+                    end
+                    
+                    -- Special case: zombied community - check if they have weapons
+                    if community == "zombied" then
+                        -- Zombied NPCs can use weapons if they have them equipped
+                        if draftsman.active_item and draftsman.active_item:section() then
+                            local weapon_section = draftsman.active_item:section()
+                            if string.find(weapon_section, "wpn_", 1, true) then
+                                if settings and settings.debug_mode then
+                                    printf("UDM Debug: Weapon damage detected via zombied NPC with weapon: %s", weapon_section)
+                                end
+                                return true
+                            end
+                        end
+                        
+                        -- Check if this is a zombified version of a weapon-using faction
+                        -- Some zombied NPCs retain their original faction's weapon capabilities
+                        if draftsman.original_community then
+                            local original_comm = draftsman:original_community()
+                            for _, faction in ipairs(weapon_factions) do
+                                if original_comm == faction then
+                                    if settings and settings.debug_mode then
+                                        printf("UDM Debug: Weapon damage detected via zombied NPC (original faction: %s)", original_comm)
+                                    end
+                                    return true
+                                end
+                            end
+                        end
+                        
+                        -- If zombied NPC has no weapon and no original faction, it's likely melee-only
+                        if settings and settings.debug_mode then
+                            printf("UDM Debug: Zombied NPC detected but no weapon - likely melee-only")
+                        end
+                        return false
+                    end
+                end
+            end
+        end
+    end
+    
+    return false
+end
+
+function get_damage_category(damage_type, source_name, settings, damage_object)
+    local category = custom_mappings[damage_type]
+    
+    if not category then
+        category = damage_type_to_category[damage_type]
+    end
+    
+    if not category and source_name then
+        local source_lower = string.lower(source_name)
+        category = check_source_patterns(source_lower, source_name)
+    end
+    
+    category = category or "other"
+    
+    if damage_type == 0 and source_name then
+        category = apply_environmental_corrections(category, source_name, settings, damage_object)
+    end
+    
+    return category
+end
+
+function apply_environmental_corrections(category, source_name, settings, damage_object)
+    local source_lower = string.lower(source_name)
+    local corrected_category = nil
+    
+    if settings and settings.debug_mode then
+        printf("UDM Debug: apply_environmental_corrections called for '%s' (original category: %s)", source_name, category)
+    end
+    
+    -- UNIVERSAL PATTERN-BASED APPROACH: Check for any environmental/zone patterns first
+    -- This catches ALL zone types regardless of map prefix (yan_, pri_, etc.)
+    if string.find(source_lower, "zone_", 1, true) or 
+       string.find(source_lower, "mine_", 1, true) or
+       string.find(source_lower, "field_", 1, true) then
+        -- This is environmental damage - use pattern matching instead of weapon detection
+        if settings and settings.debug_mode then
+            printf("UDM Debug: Environmental pattern detected in '%s', calling check_source_patterns", source_lower)
+        end
+        corrected_category = check_source_patterns(source_lower, source_name)
+        if settings and settings.debug_mode then
+            printf("UDM Debug: check_source_patterns returned: %s", corrected_category or "nil")
+        end
+    -- Special case: "actor" source is typically environmental damage (radiation, etc.)
+    elseif source_lower == "actor" then
+        if settings and settings.debug_mode then
+            printf("UDM Debug: Actor source detected - treating as environmental damage")
+        end
+        -- For actor damage, prioritize environmental classification over weapon properties
+        -- Actor damage is almost always environmental (radiation, etc.) rather than weapon damage
+        if settings and settings.debug_mode then
+            printf("UDM Debug: Actor damage - prioritizing environmental classification (radiation)")
+        end
+        corrected_category = "radiation"
+    elseif string.find(source_lower, "psy_dog_phantom", 1, true) then
+        corrected_category = "psy"
+        if settings and settings.debug_mode then
+            printf("UDM Debug: psy_dog_phantom detected -> psy")
+        end
+    elseif string.find(source_lower, "m_pseudodog", 1, true) and not string.find(source_lower, "phantom", 1, true) then
+        corrected_category = "rupture"
+        if settings and settings.debug_mode then
+            printf("UDM Debug: m_pseudodog detected -> rupture")
+        end
+    elseif string.find(source_lower, "burer_fire", 1, true) then
+        corrected_category = "burn"
+        if settings and settings.debug_mode then
+            printf("UDM Debug: burer_fire detected -> burn")
+        end
+    elseif string.find(source_lower, "burer_electra", 1, true) then
+        corrected_category = "psy"
+        if settings and settings.debug_mode then
+            printf("UDM Debug: burer_electra detected -> psy")
+        end
+    elseif string.find(source_lower, "m_burer", 1, true) then
+        corrected_category = "psy"
+        if settings and settings.debug_mode then
+            printf("UDM Debug: m_burer detected -> psy")
+        end
+    end
+    
+    if string.find(source_lower, "controller", 1, true) or string.find(source_lower, "m_controller", 1, true) then
+        corrected_category = "psy"
+        if settings and settings.debug_mode then
+            printf("UDM Debug: controller detected -> psy")
+        end
+    end
+    
+    if string.find(source_lower, "poltergeist", 1, true) then
+        corrected_category = "psy"
+        if settings and settings.debug_mode then
+            printf("UDM Debug: poltergeist detected -> psy")
+        end
+    end
+    
+    -- Only apply weapon damage detection for NPC sources (not environmental, not actor)
+    if not corrected_category and damage_object and source_lower ~= "actor" and not string.find(source_lower, "zone_", 1, true) and not string.find(source_lower, "mine_", 1, true) and not string.find(source_lower, "field_", 1, true) then
+        if settings and settings.debug_mode then
+            printf("UDM Debug: No environmental pattern, checking for weapon damage")
+        end
+        if is_weapon_damage(damage_object, source_name, settings) then
+            corrected_category = "ballistic"
+            if settings and settings.debug_mode then
+                printf("UDM Debug: Weapon damage detected -> ballistic")
+            end
+        end
+    end
+    
+    -- If still no correction, use pattern matching
+    if not corrected_category then
+        if settings and settings.debug_mode then
+            printf("UDM Debug: No specific correction found, calling check_source_patterns as fallback")
+        end
+        corrected_category = check_source_patterns(source_lower, source_name)
+        if settings and settings.debug_mode then
+            printf("UDM Debug: Fallback check_source_patterns returned: %s", corrected_category or "nil")
+        end
+    end
+    
+    -- Return corrected category if we have one, otherwise return original
+    if corrected_category then
+        if settings and settings.debug_mode then
+            printf("UDM Debug: Returning corrected category: %s", corrected_category)
+        end
+        return corrected_category
+    end
+    
+    if settings and settings.debug_mode then
+        printf("UDM Debug: No correction found, returning original category: %s", category)
+    end
+    
+    return category
+end
+
+local function should_show_debug(source_name, damage_type)
+    local current_time = time_global()
+    local debug_key = (source_name or "no_source") .. "_damage"
+    
+    if not last_debug_time[debug_key] or (current_time - last_debug_time[debug_key]) > DEBUG_SPAM_INTERVAL then
+        last_debug_time[debug_key] = current_time
+        return true
+    end
+    
+    return false
+end
+
+function process_damage_modification(shit, bone_id, flags)
+    if not shit or shit._udm_modified then
+        return
+    end
+    
+    local settings = get_mcm_settings()
+    local damage_type = shit.type_id or 0
+    
+    local original_power = 0
+    local original_impulse = 0
+    
+    if shit.power then
+        local success, result = pcall(function() return tonumber(shit.power) end)
+        if success and result then original_power = result end
+    end
+    
+    if shit.impulse then  
+        local success, result = pcall(function() return tonumber(shit.impulse) end)
+        if success and result then original_impulse = result end
+    end
+    
+    if original_power <= 0 then return end
+    
+    local source_name = nil
+    if shit.draftsman then
+        local success, result = pcall(function()
+            return shit.draftsman:name()
+        end)
+        if success then source_name = result end
+    end
+    
+    if settings and settings.debug_mode then
+        printf("UDM Debug: Processing damage - type: %s, source: '%s', power: %.2f", damage_type, source_name or "nil", original_power)
+    end
+    
+    local category = get_damage_category(damage_type, source_name, settings, shit)
+    
+    if settings and settings.debug_mode then
+        printf("UDM Debug: Final category determined: %s", category)
+    end
+    
+    local enabled_key = category .. "_enabled"
+    local modifier_key = category .. "_modifier"
+    
+    local modifier = 100
+    if settings[enabled_key] and settings[modifier_key] then
+        modifier = settings[modifier_key]
+    end
+    
+    if modifier == 100 then return end
+    
+    local multiplier = modifier / 100
+    
+    if shit.power and original_power > 0 then
+        shit.power = original_power * multiplier
+    end
+    
+    if shit.impulse and original_impulse > 0 then
+        shit.impulse = original_impulse * multiplier
+    end
+    
+    shit._udm_modified = true
+    
+    if settings.debug_mode and should_show_debug(source_name, damage_type) and original_power > 0.001 then
+        printf(string.format("UDM: %s | %s | %.1f -> %.1f (%d%%)", 
+            source_name or "unknown", category, original_power, shit.power or 0, modifier))
+    end
+end
+
+-- Add a debug function to help troubleshoot issues
+function udm_debug_status()
+    local current_time = time_global()
+    printf("=== UDM Debug Status ===")
+    printf("Initialized: %s", tostring(mod_state.initialized))
+    printf("Callbacks Registered: %s", tostring(mod_state.callbacks_registered))
+    printf("Initialization Attempts: %d", mod_state.initialization_attempts)
+    printf("Last Successful Hit: %d ms ago", current_time - mod_state.last_successful_hit)
+    printf("Game Loading: %s", tostring(game_loading))
+    printf("Reinitializing: %s", tostring(reinitializing))
+    printf("MCM Available: %s", tostring(check_mcm_availability()))
+    printf("GAMMA Environment: %s", tostring(mod_state.gamma_environment))
+    printf("PDA Alerts Enabled: %s", tostring(mod_state.pda_alerts_enabled))
+    
+    if mod_state.settings_cache then
+        printf("Settings Cache: Available")
+        printf("Last Settings Check: %d ms ago", current_time - mod_state.last_settings_check)
+    else
+        printf("Settings Cache: Not available")
+    end
+    
+    printf("========================")
+end
+
+-- Add a function to force reinitialization for debugging
+function udm_force_reinit()
+    printf("UDM: Force reinitialization requested")
+    show_pda_notification("Force reinitialization requested", "info")
+    mod_state.initialized = false
+    mod_state.callbacks_registered = false
+    mod_state.initialization_attempts = 0
+    reinitializing = false
+    initialize_mod()
+end
+
+function actor_on_before_hit(shit, bone_id, flags)
+    local current_time = time_global()
+    mod_state.last_successful_hit = current_time
+    
+    -- Validate mod state before processing
+    if not validate_mod_state() then
+        if mod_state.initialization_attempts < MAX_INIT_ATTEMPTS then
+            safe_reinitialize()
+        end
+        return
+    end
+    
+    local success, error_msg = pcall(function()
+        process_damage_modification(shit, bone_id, flags)
+    end)
+    
+    if not success then
+        printf("UDM Error in damage processing: %s", tostring(error_msg))
+        mod_state.initialized = false
+        mod_state.callbacks_registered = false
+    end
+end
+
+function on_game_start()
+    mod_state.initialized = false
+    mod_state.callbacks_registered = false
+    mod_state.settings_cache = nil
+    mod_state.last_settings_check = 0
+    mod_state.initialization_attempts = 0
+    mod_state.last_successful_hit = 0
+    mod_state.gamma_environment = false
+    mod_state.pda_alerts_enabled = true
+    mod_state.last_notification_time = 0
+    
+    last_debug_time = {}
+    game_loading = false
+    last_game_time = time_global()
+    reinitializing = false
+    
+    -- Initialize keybinds
+    initialize_keybinds()
+    
+    CreateTimeEvent("udm_init", "startup", 0.1, function()
+        initialize_mod()
+        return true
+    end)
+end
+
+function initialize_keybinds()
+    -- Clean up existing keybind instances
+    for id, instance in pairs(keybind_instances) do
+        if instance.destroy then
+            instance:destroy()
+        end
+    end
+    keybind_instances = {}
+    
+    -- Check if MCM keybind system is available
+    local mcm_keybinds_available = ui_mcm and ui_mcm.get and ui_mcm.simple_press and ui_mcm.double_tap and ui_mcm.key_hold and ui_mcm.get_mod_key
+    
+    if not mcm_keybinds_available then
+        printf("UDM: MCM keybind system not available, using fallback keybinds")
+        -- Register fallback key handler
+        pcall(function()
+            RegisterScriptCallback("on_key_press", fallback_key_handler)
+        end)
+        return
+    end
+    
+    -- Initialize debug status keybind
+    local debug_status_settings = {
+        key = ui_mcm.get("dmg_mod_settings/debug_status_key") or DIK_keys.DIK_F10,
+        mode = ui_mcm.get("dmg_mod_settings/debug_status_mode") or 0,
+        modifier = ui_mcm.get("dmg_mod_settings/debug_status_modifier") or 0
+    }
+    
+    keybind_instances.debug_status = UDMInputManager("debug_status", debug_status_settings)
+    
+    -- Initialize force reinit keybind
+    local force_reinit_settings = {
+        key = ui_mcm.get("dmg_mod_settings/force_reinit_key") or DIK_keys.DIK_F11,
+        mode = ui_mcm.get("dmg_mod_settings/force_reinit_mode") or 0,
+        modifier = ui_mcm.get("dmg_mod_settings/force_reinit_modifier") or 0
+    }
+    
+    keybind_instances.force_reinit = UDMInputManager("force_reinit", force_reinit_settings)
+    
+    printf("UDM: Configurable keybinds initialized")
+end
+
+-- Fallback key handler for when MCM keybind system isn't available
+function fallback_key_handler(dik)
+    -- F10 for debug status, F11 for force reinit (fallback)
+    if dik == DIK_keys.DIK_F10 then
+        udm_debug_status()
+    elseif dik == DIK_keys.DIK_F11 then
+        udm_force_reinit()
+    end
+end
+
+-- Key press handling is now done through the UDMInputManager class
+
+function on_level_change()
+    game_loading = true
+    mod_state.initialized = false
+    mod_state.callbacks_registered = false
+    
+    CreateTimeEvent("udm_level_change", "reinit", 1.5, function()
+        initialize_mod()
+        game_loading = false
+        return true
+    end)
+end
+
+function on_save_state()
+    -- Ensure state is properly saved
+    mod_state.last_successful_hit = time_global()
+end
+
+function on_load_state()
+    game_loading = true
+    mod_state.initialized = false
+    mod_state.callbacks_registered = false
+    
+    CreateTimeEvent("udm_load_state", "reinit", 0.5, function()
+        initialize_mod()
+        game_loading = false
+        return true
+    end)
+end
+
+function on_option_change()
+    mod_state.settings_cache = nil
+    mod_state.last_settings_check = 0
+    last_debug_time = {}
+    
+    -- Reinitialize keybinds when options change
+    initialize_keybinds()
+end

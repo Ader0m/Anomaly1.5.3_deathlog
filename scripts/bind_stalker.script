@@ -166,16 +166,18 @@ function actor_binder:reinit()
 ["hit"] = function(power, impulse, dir, who, bone_index, space_restrictor, hit_type)
     
     log("[BIND_STALKER] HIT CALLBACK START")
-    
-    -- Ð¤ÑƒÐ½ÐºÑ†Ð¸Ñ Ð´Ð»Ñ Ð±ÐµÐ·Ð¾Ð¿Ð°ÑÐ½Ð¾Ð³Ð¾ Ð²Ñ‹Ð·Ð¾Ð²Ð° Ð¼ÐµÑ‚Ð¾Ð´Ð¾Ð² userdata
-    local function safe_call_method(obj, method_name, ...)
+
+    local function safe_call_method(obj, method_name)
         if type(obj) ~= "userdata" then
             return false, nil
         end
         local ok, result = pcall(function()
-            return obj[method_name](obj, ...)
+            if obj[method_name] then
+                return obj[method_name](obj)
+            end
+            return nil
         end)
-        if ok then
+        if ok and result ~= nil then
             return true, result
         else
             return false, nil
@@ -232,7 +234,7 @@ function actor_binder:reinit()
     if on_actor_hit then -- ÐŸÑ€ÑÐ¼Ð¾Ð¹ Ð²Ñ‹Ð·Ð¾Ð², ÐµÑÐ»Ð¸ Ñ„ÑƒÐ½ÐºÑ†Ð¸Ñ Ð·Ð°Ð³Ñ€ÑƒÐ¶ÐµÐ½Ð°
         on_actor_hit(power, impulse, dir, who, bone_index, space_restrictor, hit_type)
     end
-    bind_stalker_ext.actor_on_hit_callback(power, impulse, dir, who, bone_index, space_restrictor, hit_type)
+    bind_stalker_ext.actor_on_hit_callback(self, self.object, power, dir, who, bone_index)
 end,
 				["key_press"]				= bind_stalker_ext.on_key_press,
 				["key_release"]				= bind_stalker_ext.on_key_release,
