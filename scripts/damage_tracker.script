@@ -427,6 +427,8 @@ end
 
 -- Глобальная переменная для хранения здоровья до удара
 local hp_before = nil
+-- Глобальная переменная для хранения типа урона
+local damage_type_before = nil
 
 -- Регистрируем callback через систему скриптовых коллбэков
 function on_game_start()
@@ -445,6 +447,15 @@ function actor_on_before_hit(shit, bone_id, flags)
         if ok_hp and hp_val then
             hp_before = hp_val
             safe_log("[DAMAGE_TRACKER] HP before hit: " .. tostring(hp_before))
+        end
+        
+        -- Сохраняем тип урона из структуры хита
+        if shit and type(shit) == "userdata" then
+            local ok_dtype, dtype_val = pcall(function() return shit:type() end)
+            if ok_dtype and dtype_val then
+                damage_type_before = dtype_val
+                safe_log("[DAMAGE_TRACKER] Damage type before hit: " .. tostring(damage_type_before))
+            end
         end
     end
 end
@@ -489,6 +500,8 @@ function actor_on_hit_callback(obj, amount, local_direction, who, bone_index)
         safe_log("[DAMAGE_TRACKER] Skipping hit with zero or negative damage")
         return
     end
+    
+    safe_log("[DAMAGE_TRACKER] FINAL DAMAGE (after modifiers/armor): " .. tostring(real_damage))
     
     local bone_id = bone_index or 0
     
@@ -598,15 +611,17 @@ function actor_on_hit_callback(obj, amount, local_direction, who, bone_index)
     safe_log("[DAMAGE_TRACKER] Source display name: " .. safe_tostring(display_name or "nil"))
     
     -- Определяем категорию урона используя систему из damage_modifier.txt
-    local damage_category = get_damage_category(-1, display_name, nil)
+    -- Используем сохранённый тип урона из actor_on_before_hit
+    local damage_category = get_damage_category(damage_type_before or -1, display_name, nil)
     
+    safe_log("[DAMAGE_TRACKER] DAMAGE TYPE ID: " .. tostring(damage_type_before or -1))
     safe_log("[DAMAGE_TRACKER] DAMAGE CATEGORY: " .. damage_category)
 
     if who then
-        safe_log("[DAMAGE_TRACKER] CLASSIFIED HIT: [" .. damage_category .. "] from '" .. safe_tostring(display_name) .. "' - Damage: " .. tostring(real_damage) .. " - Bone: " .. bone_name_ru)
+        safe_log("[DAMAGE_TRACKER] CLASSIFIED HIT: [" .. damage_category .. "] from '" .. safe_tostring(display_name) .. "' - FINAL DAMAGE: " .. tostring(real_damage) .. " - Bone: " .. bone_name_ru)
     else
         safe_log("[DAMAGE_TRACKER] Source: Nil (environment/fall/etc)")
-        safe_log("[DAMAGE_TRACKER] CLASSIFIED HIT: [" .. damage_category .. "] from ENVIRONMENT - Damage: " .. tostring(real_damage) .. " - Bone: " .. bone_name_ru)
+        safe_log("[DAMAGE_TRACKER] CLASSIFIED HIT: [" .. damage_category .. "] from ENVIRONMENT - FINAL DAMAGE: " .. tostring(real_damage) .. " - Bone: " .. bone_name_ru)
     end
 
     safe_log("[DAMAGE_TRACKER] === END CLASSIFIED HIT ===")
