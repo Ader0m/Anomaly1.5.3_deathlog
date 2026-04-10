@@ -85,20 +85,23 @@ local function get_bone_name_ru(bone_id)
 end
 
 -- Маппинг ID типа урона в категорию (из damage_modifier.txt)
+-- Актуальные HitType из движка X-Ray:
+-- 0=wound, 1=wound_2, 2=shock, 3=acid, 4=fire, 5=radiation, 
+-- 6=fire_wound (пулевой/баллистический), 7=explosion, 8=psy, 9=burn (хим ожог)
 local damage_type_to_category = {
-    [0] = "rupture",
-    [1] = "burn",
-    [2] = "electrical",
-    [3] = "impact",
-    [4] = "explosive",
-    [5] = "ballistic",
-    [6] = "chemical",
-    [7] = "radiation",
-    [8] = "psy",
-    [9] = "burn",
-    [10] = "chemical",
-    [11] = "burn",
-    [12] = "impact"
+    [0] = "rupture",       -- wound (ранение, иногда melee)
+    [1] = "rupture",       -- wound_2 (вторичное ранение)
+    [2] = "electrical",    -- shock (электро)
+    [3] = "chemical",      -- acid (кислота)
+    [4] = "burn",          -- fire (огонь)
+    [5] = "radiation",     -- radiation (радиация)
+    [6] = "ballistic",     -- fire_wound (пулевой/баллистический урон от оружия)
+    [7] = "explosive",     -- explosion (взрыв)
+    [8] = "psy",           -- psy (пси)
+    [9] = "burn",          -- burn (химический ожог)
+    [10] = "chemical",     -- additional chemical
+    [11] = "burn",         -- additional burn
+    [12] = "impact"        -- impact/teleport
 }
 
 -- Точные маппинги источников урона (ключевые паттерны из damage_modifier.txt)
