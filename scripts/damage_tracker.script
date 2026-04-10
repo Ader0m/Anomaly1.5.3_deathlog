@@ -1,5 +1,6 @@
 -- damage_tracker.script
 -- Логирование урона актора с классификацией из damage_modifier.txt
+-- ОТЛАДКА: Проверяем доступные методы у объекта hit
 
 local function safe_tostring(val)
     local ok, result = pcall(tostring, val)
@@ -14,6 +15,24 @@ local function safe_call_method(obj, method_name)
     local ok, result = pcall(function()
         if obj[method_name] then
             return obj[method_name](obj)
+        end
+        return nil
+    end)
+    if ok and result ~= nil then
+        return true, result
+    else
+        return false, nil
+    end
+end
+
+-- Функция для безопасного вызова методов userdata с аргументом
+local function safe_call_method_with_arg(obj, method_name, arg)
+    if type(obj) ~= "userdata" then
+        return false, nil
+    end
+    local ok, result = pcall(function()
+        if obj[method_name] then
+            return obj[method_name](obj, arg)
         end
         return nil
     end)
@@ -429,6 +448,8 @@ end
 local hp_before = nil
 -- Глобальная переменная для хранения типа урона
 local damage_type_before = nil
+-- Глобальная переменная для хранения структуры хита
+local hit_struct_before = nil
 
 -- Регистрируем callback через систему скриптовых коллбэков
 function on_game_start()
@@ -441,6 +462,9 @@ end
 -- Callback для сохранения здоровья ДО получения урона
 -- Params: (shit, bone_id, flags) где shit - структура хита
 function actor_on_before_hit(shit, bone_id, flags)
+    -- Сохраняем структуру хита для дальнейшего анализа
+    hit_struct_before = shit
+    
     -- Сохраняем здоровье актёра до применения урона
     if db.actor then
         local ok_hp, hp_val = pcall(function() return db.actor.health end)
@@ -456,6 +480,18 @@ function actor_on_before_hit(shit, bone_id, flags)
                 damage_type_before = dtype_val
                 safe_log("[DAMAGE_TRACKER] Damage type before hit: " .. tostring(damage_type_before))
             end
+            
+            -- Пытаемся получить базовый урон из хита (amount)
+            local ok_amount, amount_val = pcall(function() return shit:amount() end)
+            if ok_amount and amount_val then
+                safe_log("[DAMAGE_TRACKER] Hit amount (base from hit struct): " .. tostring(amount_val))
+            end
+            
+            -- Логируем bone из хита для отладки
+            local ok_hbone, hbone_val = pcall(function() return shit:bone() end)
+            if ok_hbone and hbone_val then
+                safe_log("[DAMAGE_TRACKER] Hit bone (from hit struct): " .. tostring(hbone_val))
+            end
         end
     end
 end
@@ -469,6 +505,8 @@ function actor_on_hit_callback(obj, amount, local_direction, who, bone_index)
     safe_log("[DAMAGE_TRACKER] obj type: " .. type(obj))
     safe_log("[DAMAGE_TRACKER] amount (base): " .. safe_tostring(amount))
     safe_log("[DAMAGE_TRACKER] bone_index: " .. safe_tostring(bone_index))
+    safe_log("[DAMAGE_TRACKER] hp_before value: " .. safe_tostring(hp_before))
+    safe_log("[DAMAGE_TRACKER] hit_struct_before exists: " .. safe_tostring(hit_struct_before ~= nil))
     
     -- Вычисляем реальный урон через разницу здоровья
     local hp_after = -1
@@ -476,6 +514,7 @@ function actor_on_hit_callback(obj, amount, local_direction, who, bone_index)
         local ok_hp, hp_val = pcall(function() return db.actor.health end)
         if ok_hp then
             hp_after = hp_val
+            safe_log("[DAMAGE_TRACKER] HP after (current): " .. tostring(hp_after))
         end
     end
     
@@ -486,18 +525,34 @@ function actor_on_hit_callback(obj, amount, local_direction, who, bone_index)
         -- Умножаем на 100 для UI-формата (здоровье в диапазоне 0.0–1.0)
         real_damage = real_damage * 100
         safe_log("[DAMAGE_TRACKER] HP before: " .. tostring(hp_before) .. ", HP after: " .. tostring(hp_after))
+        safe_log("[DAMAGE_TRACKER] HP DIFFERENCE (raw): " .. tostring(hp_before - hp_after))
         safe_log("[DAMAGE_TRACKER] REAL DAMAGE calculated: " .. tostring(real_damage))
+        
+        -- Если разница равна 0, проверяем, был ли урон вообще
+        if real_damage <= 0 then
+            safe_log("[DAMAGE_TRACKER] WARNING: Zero damage detected - armor may have blocked it or hit was before health update")
+            -- Пробуем получить урон из сохранённой структуры хита
+            if hit_struct_before and type(hit_struct_before) == "userdata" then
+                local ok_hamount, hamount = pcall(function() return hit_struct_before:amount() end)
+                if ok_hamount and hamount then
+                    safe_log("[DAMAGE_TRACKER] Hit struct amount (BASE): " .. tostring(hamount))
+                    -- Базовый урон из хита - это урон ДО модификаторов, но если HP не изменился,
+                    -- значит урон был заблокирован или это был miss
+                end
+            end
+        end
     else
         -- Если hp_before не установлен, используем amount как запасной вариант
         real_damage = amount or 0
-        safe_log("[DAMAGE_TRACKER] WARNING: hp_before not set, using base amount as fallback")
+        safe_log("[DAMAGE_TRACKER] WARNING: hp_before not set, using base amount as fallback: " .. tostring(real_damage))
     end
     
     -- Сбрасываем hp_before для следующего удара
     hp_before = nil
+    hit_struct_before = nil
     
     if real_damage <= 0 then
-        safe_log("[DAMAGE_TRACKER] Skipping hit with zero or negative damage")
+        safe_log("[DAMAGE_TRACKER] Skipping hit with zero or negative damage (armor blocked or miss)")
         return
     end
     
