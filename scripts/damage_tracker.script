@@ -440,9 +440,10 @@ end
 function actor_on_before_hit(obj)
     if obj and db.actor then
         -- Сравниваем по ID объекта вместо прямого сравнения userdata
-        local obj_id = obj:id()
-        local actor_id = db.actor:id()
-        if obj_id and actor_id and obj_id == actor_id then
+        local ok_obj, obj_id = pcall(function() return obj:id() end)
+        local ok_actor, actor_id = pcall(function() return db.actor:id() end)
+        
+        if ok_obj and ok_actor and obj_id and actor_id and obj_id == actor_id then
             hp_before = db.actor.health
             safe_log("[DAMAGE_TRACKER] HP before hit: " .. tostring(hp_before or -1))
         end
@@ -460,7 +461,14 @@ function actor_on_hit_callback(obj, amount, local_direction, who, bone_index)
     safe_log("[DAMAGE_TRACKER] bone_index: " .. safe_tostring(bone_index))
     
     -- Вычисляем реальный урон через разницу здоровья
-    local hp_after = db.actor and db.actor.health or -1
+    local hp_after = -1
+    if db.actor then
+        local ok_hp, hp_val = pcall(function() return db.actor.health end)
+        if ok_hp then
+            hp_after = hp_val
+        end
+    end
+    
     local real_damage = 0
     
     if hp_before and hp_after >= 0 and hp_before >= 0 then
@@ -522,8 +530,8 @@ function actor_on_hit_callback(obj, amount, local_direction, who, bone_index)
                 
                 -- Если имя мутанта не найдено, пробуем alife объект
                 if display_name == source_name then
-                    local ok, obj_id = pcall(function() return who:id() end)
-                    if ok and obj_id then
+                    local ok_who_id, obj_id = pcall(function() return who:id() end)
+                    if ok_who_id and obj_id then
                         local ok_alife, alife_obj = pcall(function()
                             return alife():object(obj_id)
                         end)
@@ -545,8 +553,8 @@ function actor_on_hit_callback(obj, amount, local_direction, who, bone_index)
                                         -- Пытаемся найти профиль сталкера по story_id в db.story
                                         local story_data = db.story[story_id]
                                         if story_data and story_data.object then
-                                            local obj_name = story_data.object:name()
-                                            if obj_name and obj_name ~= "" then
+                                            local ok_obj_name, obj_name = pcall(function() return story_data.object:name() end)
+                                            if ok_obj_name and obj_name and obj_name ~= "" then
                                                 display_name = obj_name
                                                 safe_log("[DAMAGE_TRACKER] Display name from db.story: " .. obj_name)
                                             else
