@@ -424,26 +424,57 @@ local function safe_log(...)
     log(...)
 end
 
-safe_log(">>> DAMAGE TRACKER LOADED (SAFE MODE) <<<")
 
--- Регистрируем callback через систему скриптовых колбэков
+-- Глобальная переменная для хранения здоровья до удара
+local hp_before = nil
+
+-- Регистрируем callback через систему скриптовых коллбэков
 function on_game_start()
+    RegisterScriptCallback("actor_on_before_hit", actor_on_before_hit)
     RegisterScriptCallback("actor_on_hit_callback", actor_on_hit_callback)
+    safe_log("[DAMAGE_TRACKER] Registered actor_on_before_hit callback")
     safe_log("[DAMAGE_TRACKER] Registered actor_on_hit_callback callback")
 end
 
--- Callback для обработки попадания в актёра (использует amount - фактический нанесённый урон)
+-- Callback для сохранения здоровья ДО получения урона
+function actor_on_before_hit(obj)
+    if obj and db.actor and obj == db.actor then
+        hp_before = db.actor.health
+        safe_log("[DAMAGE_TRACKER] HP before hit: " .. tostring(hp_before or -1))
+    end
+end
+
+-- Callback для обработки попадания в актёра (вычисляет реальный урон через разницу здоровья)
 -- Params: (obj, amount, local_direction, who, bone_index)
 function actor_on_hit_callback(obj, amount, local_direction, who, bone_index)
     safe_log("[DAMAGE_TRACKER] CALLBACK FIRED (actor_on_hit_callback)")
     
     -- Диагностика типа параметров
     safe_log("[DAMAGE_TRACKER] obj type: " .. type(obj))
-    safe_log("[DAMAGE_TRACKER] amount: " .. safe_tostring(amount))
+    safe_log("[DAMAGE_TRACKER] amount (base): " .. safe_tostring(amount))
     safe_log("[DAMAGE_TRACKER] bone_index: " .. safe_tostring(bone_index))
     
-    if type(amount) ~= "number" or amount <= 0 then
-        safe_log("[DAMAGE_TRACKER] Skipping hit with invalid or zero damage")
+    -- Вычисляем реальный урон через разницу здоровья
+    local hp_after = db.actor and db.actor.health or -1
+    local real_damage = 0
+    
+    if hp_before and hp_after >= 0 and hp_before >= 0 then
+        real_damage = hp_before - hp_after
+        -- Умножаем на 100 для UI-формата (здоровье в диапазоне 0.0–1.0)
+        real_damage = real_damage * 100
+        safe_log("[DAMAGE_TRACKER] HP before: " .. tostring(hp_before) .. ", HP after: " .. tostring(hp_after))
+        safe_log("[DAMAGE_TRACKER] REAL DAMAGE calculated: " .. tostring(real_damage))
+    else
+        -- Если hp_before не установлен, используем amount как запасной вариант
+        real_damage = amount or 0
+        safe_log("[DAMAGE_TRACKER] WARNING: hp_before not set, using base amount as fallback")
+    end
+    
+    -- Сбрасываем hp_before для следующего удара
+    hp_before = nil
+    
+    if real_damage <= 0 then
+        safe_log("[DAMAGE_TRACKER] Skipping hit with zero or negative damage")
         return
     end
     
@@ -555,16 +586,15 @@ function actor_on_hit_callback(obj, amount, local_direction, who, bone_index)
     safe_log("[DAMAGE_TRACKER] Source display name: " .. safe_tostring(display_name or "nil"))
     
     -- Определяем категорию урона используя систему из damage_modifier.txt
-    -- Передаем amount вместо s_hit, так как hit_type больше не нужен для классификации по источнику
     local damage_category = get_damage_category(-1, display_name, nil)
     
     safe_log("[DAMAGE_TRACKER] DAMAGE CATEGORY: " .. damage_category)
 
     if who then
-        safe_log("[DAMAGE_TRACKER] CLASSIFIED HIT: [" .. damage_category .. "] from '" .. safe_tostring(display_name) .. "' - Damage: " .. tostring(amount) .. " - Bone: " .. bone_name_ru)
+        safe_log("[DAMAGE_TRACKER] CLASSIFIED HIT: [" .. damage_category .. "] from '" .. safe_tostring(display_name) .. "' - Damage: " .. tostring(real_damage) .. " - Bone: " .. bone_name_ru)
     else
         safe_log("[DAMAGE_TRACKER] Source: Nil (environment/fall/etc)")
-        safe_log("[DAMAGE_TRACKER] CLASSIFIED HIT: [" .. damage_category .. "] from ENVIRONMENT - Damage: " .. tostring(amount) .. " - Bone: " .. bone_name_ru)
+        safe_log("[DAMAGE_TRACKER] CLASSIFIED HIT: [" .. damage_category .. "] from ENVIRONMENT - Damage: " .. tostring(real_damage) .. " - Bone: " .. bone_name_ru)
     end
 
     safe_log("[DAMAGE_TRACKER] === END CLASSIFIED HIT ===")
