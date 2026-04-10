@@ -450,6 +450,8 @@ local hp_before = nil
 local damage_type_before = nil
 -- Глобальная переменная для хранения структуры хита
 local hit_struct_before = nil
+-- Глобальная переменная для хранения финального урона из power()
+local final_damage_from_power = nil
 
 -- Регистрируем callback через систему скриптовых коллбэков
 function on_game_start()
@@ -497,6 +499,8 @@ function actor_on_before_hit(shit, bone_id, flags)
             local ok_power, power_val = pcall(function() return shit:power() end)
             if ok_power and power_val then
                 safe_log("[DAMAGE_TRACKER] Hit power: " .. tostring(power_val))
+                -- Сохраняем power как потенциальный финальный урон
+                final_damage_from_power = power_val
             end
             
             local ok_impulse, impulse_val = pcall(function() return shit:impulse() end)
@@ -530,6 +534,7 @@ function actor_on_hit_callback(obj, amount, local_direction, who, bone_index)
     end
     
     local real_damage = 0
+    local used_power_fallback = false
     
     if hp_before and hp_after >= 0 and hp_before >= 0 then
         real_damage = hp_before - hp_after
@@ -539,24 +544,15 @@ function actor_on_hit_callback(obj, amount, local_direction, who, bone_index)
         safe_log("[DAMAGE_TRACKER] HP DIFFERENCE (raw): " .. tostring(hp_before - hp_after))
         safe_log("[DAMAGE_TRACKER] REAL DAMAGE calculated: " .. tostring(real_damage))
         
-        -- Если разница равна 0, проверяем, был ли урон вообще
+        -- Если разница равна 0, проверяем power() из hit структуры как fallback
         if real_damage <= 0 then
-            safe_log("[DAMAGE_TRACKER] WARNING: Zero damage detected - armor may have blocked it or hit was before health update")
-            -- Пробуем получить урон из сохранённой структуры хита
-            if hit_struct_before and type(hit_struct_before) == "userdata" then
-                local ok_hamount, hamount = pcall(function() return hit_struct_before:amount() end)
-                if ok_hamount and hamount then
-                    safe_log("[DAMAGE_TRACKER] Hit struct amount (BASE): " .. tostring(hamount))
-                    -- Базовый урон из хита - это урон ДО модификаторов, но если HP не изменился,
-                    -- значит урон был заблокирован или это был miss
-                end
-                
-                -- Проверяем power который может содержать финальный урон после модификаторов
-                local ok_hpower, hpower = pcall(function() return hit_struct_before:power() end)
-                if ok_hpower and hpower and hpower > 0 then
-                    safe_log("[DAMAGE_TRACKER] Hit struct power (may be final damage): " .. tostring(hpower))
-                    -- Если HP не изменился но power > 0, возможно это был урон по броне
-                end
+            safe_log("[DAMAGE_TRACKER] WARNING: Zero damage from HP difference")
+            -- Используем сохранённый final_damage_from_power если он есть
+            if final_damage_from_power and final_damage_from_power > 0 then
+                -- Конвертируем power в тот же формат (умножаем на 100)
+                real_damage = final_damage_from_power * 100
+                used_power_fallback = true
+                safe_log("[DAMAGE_TRACKER] Using power() as fallback damage: " .. tostring(real_damage))
             end
         end
     else
@@ -568,13 +564,18 @@ function actor_on_hit_callback(obj, amount, local_direction, who, bone_index)
     -- Сбрасываем hp_before для следующего удара
     hp_before = nil
     hit_struct_before = nil
+    final_damage_from_power = nil
     
     if real_damage <= 0 then
         safe_log("[DAMAGE_TRACKER] Skipping hit with zero or negative damage (armor blocked or miss)")
         return
     end
     
-    safe_log("[DAMAGE_TRACKER] FINAL DAMAGE (after modifiers/armor): " .. tostring(real_damage))
+    if used_power_fallback then
+        safe_log("[DAMAGE_TRACKER] FINAL DAMAGE (from power fallback): " .. tostring(real_damage))
+    else
+        safe_log("[DAMAGE_TRACKER] FINAL DAMAGE (after modifiers/armor): " .. tostring(real_damage))
+    end
     
     local bone_id = bone_index or 0
     
