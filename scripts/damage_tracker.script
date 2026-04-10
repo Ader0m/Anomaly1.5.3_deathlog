@@ -181,6 +181,7 @@ local function get_source_name(who)
     end
     
     if type(who) == "userdata" then
+        -- Пробуем получить отображаемое имя через name()
         local ok, name = safe_call_method(who, "name")
         if ok and name then
             return name
@@ -188,6 +189,27 @@ local function get_source_name(who)
     end
     
     return safe_tostring(who)
+end
+
+-- Функция для получения строкового имени типа урона
+local function get_hit_type_name(s_hit)
+    if type(s_hit) ~= "userdata" then
+        return nil
+    end
+    
+    -- Пробуем вызвать метод type_name() который возвращает строку ("wound", "strike", "bullet" и т.д.)
+    local ok, type_name = pcall(function()
+        if s_hit.type_name then
+            return s_hit:type_name()
+        end
+        return nil
+    end)
+    
+    if ok and type_name then
+        return type_name
+    end
+    
+    return nil
 end
 
 local function safe_log(...)
