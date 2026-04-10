@@ -162,13 +162,30 @@ local function check_source_patterns(source_lower, source_name)
     return nil
 end
 
--- Основная функция получения категории урона (из damage_modifier.txt)
-local function get_damage_category(damage_type, source_name)
+-- Функция для получения категории урона с учетом оружия (из damage_modifier.txt)
+local function get_damage_category(damage_type, source_name, s_hit)
+    -- Сначала пробуем стандартный маппинг по ID типа урона
     local category = damage_type_to_category[damage_type]
     
-    if not category and source_name then
+    -- Если тип урона 0 (rupture) или 6 (chemical), но источник - сталкер/враг,
+    -- это скорее всего пулевое оружие, а не химия/ melee
+    if source_name then
         local source_lower = string.lower(source_name)
-        category = check_source_patterns(source_lower, source_name)
+        
+        -- Проверка: если источник содержит "stalker", "sim_default", "esc_" и т.д. - это NPC с оружием
+        if string.find(source_lower, "stalker") or 
+           string.find(source_lower, "sim_default") or
+           string.find(source_lower, "esc_") or
+           string.find(source_lower, "wolf") or
+           string.find(source_lower, "fanat") then
+            -- Это NPC, скорее всего стреляет из оружия -> ballistic
+            category = "ballistic"
+        end
+        
+        -- Проверка по паттернам источников
+        if not category or category == "other" then
+            category = check_source_patterns(source_lower, source_name)
+        end
     end
     
     return category or "other"
@@ -178,6 +195,22 @@ end
 local function get_source_name(who)
     if not who then
         return nil
+    end
+    
+    -- Если who - это строка (ID объекта), пытаемся найти объект и получить его имя
+    if type(who) == "string" then
+        local ok, obj = pcall(function()
+            return alife():object(who)
+        end)
+        if ok and obj then
+            local ok_name, name = pcall(function()
+                return obj:name()
+            end)
+            if ok_name and name then
+                return name
+            end
+        end
+        return who -- Возвращаем ID если не нашли объект
     end
     
     if type(who) == "userdata" then
@@ -265,7 +298,7 @@ function actor_on_before_hit_callback(s_hit, bone_id, flags)
     safe_log("[DAMAGE_TRACKER] Who: " .. safe_tostring(source_name or "nil"))
     
     -- Определяем категорию урона используя систему из damage_modifier.txt
-    local damage_category = get_damage_category(hit_type, source_name)
+    local damage_category = get_damage_category(hit_type, source_name, s_hit)
     
     safe_log("[DAMAGE_TRACKER] DAMAGE CATEGORY: " .. damage_category)
 
