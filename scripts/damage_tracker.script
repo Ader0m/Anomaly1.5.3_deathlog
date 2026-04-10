@@ -490,14 +490,14 @@ function actor_on_before_hit_callback(s_hit, bone_id, flags)
                 display_name = nickname
                 safe_log("[DAMAGE_TRACKER] Display name from nickname: " .. nickname)
             else
-                -- Для мутантов пробуем получить игровое имя через st.get()
-                -- Это позволяет перевести системное имя (mutant_flesh_strong) в игровое (Плоть)
+                -- Для мутантов пробуем получить игровое имя через словарь мутантов
+                -- Это позволяет перевести системное имя (boar_02a_weak26696, mutant_flesh_strong) в игровое (Кабан, Плоть)
                 local sys_name = source_name
-                if sys_name and string.find(sys_name, "^mutant_") then
-                    local mutant_game_name = get_mutant_game_name(sys_name)
+                if sys_name then
+                    local mutant_game_name = get_mutant_name(sys_name)
                     if mutant_game_name then
                         display_name = mutant_game_name
-                        safe_log("[DAMAGE_TRACKER] Display name from mutant_game_name: " .. mutant_game_name)
+                        safe_log("[DAMAGE_TRACKER] Display name from mutant_name dictionary: " .. mutant_game_name)
                     end
                 end
                 
