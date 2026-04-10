@@ -1,5 +1,5 @@
 -- damage_tracker.script
--- Логирование урона актора
+-- Логирование урона актора с классификацией из damage_modifier.txt
 
 local function safe_tostring(val)
     local ok, result = pcall(tostring, val)
@@ -22,6 +22,172 @@ local function safe_call_method(obj, method_name)
     else
         return false, nil
     end
+end
+
+-- ============================================================================
+-- ИНТЕГРАЦИЯ С DAMAGE_MODIFIER.TXT: Маппинги и классификация урона
+-- ============================================================================
+
+-- Маппинг ID типа урона в категорию (из damage_modifier.txt)
+local damage_type_to_category = {
+    [0] = "rupture",
+    [1] = "burn",
+    [2] = "electrical",
+    [3] = "impact",
+    [4] = "explosive",
+    [5] = "ballistic",
+    [6] = "chemical",
+    [7] = "radiation",
+    [8] = "psy",
+    [9] = "burn",
+    [10] = "chemical",
+    [11] = "burn",
+    [12] = "impact"
+}
+
+-- Точные маппинги источников урона (ключевые паттерны из damage_modifier.txt)
+local exact_source_mappings = {
+    -- BURN DAMAGE
+    ["zone_zhar"] = "burn",
+    ["zone_field_thermal"] = "burn",
+    ["zone_mine_thermal"] = "burn",
+    ["fireball_zone"] = "burn",
+    ["generator_torrid"] = "burn",
+    ["burer_fire"] = "burn",
+    ["torrid"] = "burn",
+    ["thermal"] = "burn",
+    ["fire"] = "burn",
+    ["burn"] = "burn",
+    
+    -- CHEMICAL DAMAGE
+    ["zone_field_acidic"] = "chemical",
+    ["zone_mine_acidic"] = "chemical",
+    ["fireball_acidic_zone"] = "chemical",
+    ["zone_burning_fuzz"] = "chemical",
+    ["zone_liana"] = "chemical",
+    ["acidic"] = "chemical",
+    ["chemical"] = "chemical",
+    ["acid"] = "chemical",
+    
+    -- ELECTRICAL DAMAGE
+    ["zone_field_electric"] = "electrical",
+    ["zone_mine_electric"] = "electrical",
+    ["fireball_electric_zone"] = "electrical",
+    ["generator_electra"] = "electrical",
+    ["electr"] = "electrical",
+    ["shock"] = "electrical",
+    ["tesla"] = "electrical",
+    ["electric"] = "electrical",
+    
+    -- RADIATION DAMAGE
+    ["zone_field_radioactive"] = "radiation",
+    ["zone_mine_radioactive"] = "radiation",
+    ["radioactive"] = "radiation",
+    ["radiation"] = "radiation",
+    ["rad"] = "radiation",
+    
+    -- PSYCHIC DAMAGE
+    ["zone_field_psychic"] = "psy",
+    ["zone_monolith"] = "psy",
+    ["psy_dog_phantom"] = "psy",
+    ["m_controller"] = "psy",
+    ["m_burer"] = "psy",
+    ["psychic"] = "psy",
+    ["brain"] = "psy",
+    ["monolith"] = "psy",
+    
+    -- BALLISTIC DAMAGE (weapons)
+    ["wpn_"] = "ballistic",
+    ["stalker"] = "ballistic",
+    ["mounted_weapon"] = "ballistic",
+    
+    -- RUPTURE DAMAGE (mutants/melee)
+    ["m_bloodsucker"] = "rupture",
+    ["m_boar"] = "rupture",
+    ["m_chimera"] = "rupture",
+    ["m_dog"] = "rupture",
+    ["m_gigant"] = "rupture",
+    ["m_snork"] = "rupture",
+    ["wpn_axe"] = "rupture",
+    ["wpn_knife"] = "rupture",
+    
+    -- EXPLOSIVE DAMAGE
+    ["zone_mine_field"] = "explosive",
+    ["wpn_rpg"] = "explosive",
+    ["wpn_rg"] = "explosive",
+    ["explosive"] = "explosive",
+    
+    -- GRAVITATIONAL DAMAGE
+    ["zone_mine_gravitational"] = "gravitational",
+    ["gravity"] = "gravitational"
+}
+
+-- Паттерны для поиска по подстроке (упрощённая версия из damage_modifier.txt)
+local source_patterns = {
+    burn = {"thermal", "fire", "burn", "flame", "heat", "hot", "scorch", "torrid"},
+    chemical = {"acidic", "acid", "chemical", "toxic", "poison", "corros", "chem", "liana"},
+    electrical = {"electric", "electr", "shock", "tesla", "spark", "volt", "static"},
+    radiation = {"radioactive", "radiation", "rad", "atom", "nuclear"},
+    psy = {"psychic", "brain", "mental", "monolith", "controller", "burer", "phantom"},
+    ballistic = {"wpn_", "weapon", "bullet", "shot", "gun", "rifle", "pistol"},
+    rupture = {"bloodsucker", "boar", "chimera", "dog", "gigant", "snork", "mutant", "claw", "bite", "knife", "axe"},
+    gravitational = {"gravitational", "gravity"},
+    explosive = {"explosive", "explosion", "blast", "grenade", "rpg"},
+    impact = {"kinetic", "strike", "teleport", "anomaly", "field"}
+}
+
+-- Функция проверки паттернов источника (из damage_modifier.txt)
+local function check_source_patterns(source_lower, source_name)
+    -- Проверка точных совпадений
+    if exact_source_mappings[source_name] then
+        return exact_source_mappings[source_name]
+    end
+    
+    -- Проверка по паттернам
+    for category, patterns in pairs(source_patterns) do
+        for _, pattern in ipairs(patterns) do
+            if string.find(source_lower, pattern, 1, true) then
+                return category
+            end
+        end
+    end
+    
+    -- Проверка частичных совпадений с точными маппингами
+    for exact_name, category in pairs(exact_source_mappings) do
+        if string.find(source_lower, exact_name, 1, true) then
+            return category
+        end
+    end
+    
+    return nil
+end
+
+-- Основная функция получения категории урона (из damage_modifier.txt)
+local function get_damage_category(damage_type, source_name)
+    local category = damage_type_to_category[damage_type]
+    
+    if not category and source_name then
+        local source_lower = string.lower(source_name)
+        category = check_source_patterns(source_lower, source_name)
+    end
+    
+    return category or "other"
+end
+
+-- Функция для получения имени источника из объекта
+local function get_source_name(who)
+    if not who then
+        return nil
+    end
+    
+    if type(who) == "userdata" then
+        local ok, name = safe_call_method(who, "name")
+        if ok and name then
+            return name
+        end
+    end
+    
+    return safe_tostring(who)
 end
 
 local function safe_log(...)
@@ -226,7 +392,18 @@ function on_actor_hit(p1, p2, p3, p4, p5, p6, p7)
         end
     end
 
+    -- ========================================================================
+    // ДОБАВЛЕНО: Классификация и расширенное логирование урона
+    // ========================================================================
+    
+    -- Получаем имя источника для классификации
+    local source_name = get_source_name(who)
+    
+    -- Определяем категорию урона используя систему из damage_modifier.txt
+    local damage_category = get_damage_category(hit_type, source_name)
+    
     safe_log("[DAMAGE_TRACKER] Power: " .. safe_tostring(power) .. " | Hit Type: " .. safe_tostring(hit_type))
+    safe_log("[DAMAGE_TRACKER] DAMAGE CATEGORY: " .. damage_category)
 
     if who then
         -- Безопасная попытка получить имя объекта
@@ -238,15 +415,18 @@ function on_actor_hit(p1, p2, p3, p4, p5, p6, p7)
         end)
         if ok and name then
             safe_log("[DAMAGE_TRACKER] Source: " .. safe_tostring(name))
+            safe_log("[DAMAGE_TRACKER] CLASSIFIED HIT: [" .. damage_category .. "] from '" .. safe_tostring(name) .. "' - Power: " .. tostring(power))
         else
             safe_log("[DAMAGE_TRACKER] Source: <invalid object>")
+            safe_log("[DAMAGE_TRACKER] CLASSIFIED HIT: [" .. damage_category .. "] from <invalid object> - Power: " .. tostring(power))
         end
     else
         safe_log("[DAMAGE_TRACKER] Source: Nil (environment/fall/etc)")
+        safe_log("[DAMAGE_TRACKER] CLASSIFIED HIT: [" .. damage_category .. "] from ENVIRONMENT - Power: " .. tostring(power))
     end
 
     safe_log("[DAMAGE_TRACKER] Bone: " .. safe_tostring(bone_index))
-    safe_log("[DAMAGE_TRACKER] --- END HIT ---")
+    safe_log("[DAMAGE_TRACKER] === END CLASSIFIED HIT ===")
 end
 
 function on_actor_death()
