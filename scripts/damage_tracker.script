@@ -283,6 +283,41 @@ local function get_source_name(who)
     return safe_tostring(who)
 end
 
+-- Функция для получения игрового имени мутанта (из системного имени)
+-- Например: mutant_flesh_strong -> Плоть, mutant_dog_weak -> Слепая собака
+local function get_mutant_game_name(sys_name)
+    if not sys_name or type(sys_name) ~= "string" then
+        return nil
+    end
+    
+    -- Проверяем, является ли объект мутантом по префиксу
+    if not string.find(sys_name, "^mutant_") then
+        return nil
+    end
+    
+    -- Используем st.get() для получения локализированного игрового имени
+    local ok, game_name = pcall(function()
+        return st.get(sys_name)
+    end)
+    
+    if ok and game_name and game_name ~= "" and game_name ~= sys_name then
+        return game_name
+    end
+    
+    -- Если st.get() не сработал, пробуем альтернативный вариант
+    -- Иногда имена хранятся с префиксом st_mutant_
+    local alt_name = "st_" .. sys_name
+    local ok_alt, game_name_alt = pcall(function()
+        return st.get(alt_name)
+    end)
+    
+    if ok_alt and game_name_alt and game_name_alt ~= "" and game_name_alt ~= alt_name then
+        return game_name_alt
+    end
+    
+    return nil
+end
+
 -- Функция для получения строкового имени типа урона
 local function get_hit_type_name(s_hit)
     if type(s_hit) ~= "userdata" then
@@ -376,64 +411,77 @@ function actor_on_before_hit_callback(s_hit, bone_id, flags)
                 display_name = nickname
                 safe_log("[DAMAGE_TRACKER] Display name from nickname: " .. nickname)
             else
-                -- Если nickname не доступен, пробуем alife объект
-                local ok, obj_id = pcall(function() return who:id() end)
-                if ok and obj_id then
-                    local ok_alife, alife_obj = pcall(function()
-                        return alife():object(obj_id)
-                    end)
-                    if ok_alife and alife_obj then
-                        -- Пробуем получить секцию и найти профиль сталкера для получения имени
-                        local ok_sname, sname = pcall(function()
-                            return alife_obj:s_name()
+                -- Для мутантов пробуем получить игровое имя через st.get()
+                -- Это позволяет перевести системное имя (mutant_flesh_strong) в игровое (Плоть)
+                local sys_name = source_name
+                if sys_name and string.find(sys_name, "^mutant_") then
+                    local mutant_game_name = get_mutant_game_name(sys_name)
+                    if mutant_game_name then
+                        display_name = mutant_game_name
+                        safe_log("[DAMAGE_TRACKER] Display name from mutant_game_name: " .. mutant_game_name)
+                    end
+                end
+                
+                -- Если имя мутанта не найдено, пробуем alife объект
+                if display_name == source_name then
+                    local ok, obj_id = pcall(function() return who:id() end)
+                    if ok and obj_id then
+                        local ok_alife, alife_obj = pcall(function()
+                            return alife():object(obj_id)
                         end)
-                        
-                        if ok_sname and sname and sname ~= "" then
-                            -- Проверяем, является ли это симулированным сталкером (sim_default_...)
-                            if string.find(sname, "sim_default_stalker") then
-                                -- Для сим-сталкеров пробуем получить имя из профиля через story_id
-                                local ok_story, story_id = pcall(function()
-                                    return alife_obj:story_id()
-                                end)
-                                
-                                if ok_story and story_id and story_id ~= -1 then
-                                    -- Пытаемся найти профиль сталкера по story_id в db.story
-                                    local story_data = db.story[story_id]
-                                    if story_data and story_data.object then
-                                        local obj_name = story_data.object:name()
-                                        if obj_name and obj_name ~= "" then
-                                            display_name = obj_name
-                                            safe_log("[DAMAGE_TRACKER] Display name from db.story: " .. obj_name)
+                        if ok_alife and alife_obj then
+                            -- Пробуем получить секцию и найти профиль сталкера для получения имени
+                            local ok_sname, sname = pcall(function()
+                                return alife_obj:s_name()
+                            end)
+                            
+                            if ok_sname and sname and sname ~= "" then
+                                -- Проверяем, является ли это симулированным сталкером (sim_default_...)
+                                if string.find(sname, "sim_default_stalker") then
+                                    -- Для сим-сталкеров пробуем получить имя из профиля через story_id
+                                    local ok_story, story_id = pcall(function()
+                                        return alife_obj:story_id()
+                                    end)
+                                    
+                                    if ok_story and story_id and story_id ~= -1 then
+                                        -- Пытаемся найти профиль сталкера по story_id в db.story
+                                        local story_data = db.story[story_id]
+                                        if story_data and story_data.object then
+                                            local obj_name = story_data.object:name()
+                                            if obj_name and obj_name ~= "" then
+                                                display_name = obj_name
+                                                safe_log("[DAMAGE_TRACKER] Display name from db.story: " .. obj_name)
+                                            else
+                                                -- Если имени нет, используем cleaned s_name
+                                                display_name = sname
+                                                display_name = string.gsub(display_name, "%d+$", "")
+                                                display_name = string.gsub(display_name, "^sim_", "")
+                                                safe_log("[DAMAGE_TRACKER] Display name from s_name (sim): " .. display_name)
+                                            end
                                         else
-                                            -- Если имени нет, используем cleaned s_name
+                                            -- Если db.story нет, используем cleaned s_name
                                             display_name = sname
                                             display_name = string.gsub(display_name, "%d+$", "")
                                             display_name = string.gsub(display_name, "^sim_", "")
-                                            safe_log("[DAMAGE_TRACKER] Display name from s_name (sim): " .. display_name)
+                                            safe_log("[DAMAGE_TRACKER] Display name from s_name (sim fallback): " .. display_name)
                                         end
                                     else
-                                        -- Если db.story нет, используем cleaned s_name
+                                        -- Нет story_id, используем cleaned s_name
                                         display_name = sname
                                         display_name = string.gsub(display_name, "%d+$", "")
                                         display_name = string.gsub(display_name, "^sim_", "")
-                                        safe_log("[DAMAGE_TRACKER] Display name from s_name (sim fallback): " .. display_name)
+                                        safe_log("[DAMAGE_TRACKER] Display name from s_name (no story): " .. display_name)
                                     end
                                 else
-                                    -- Нет story_id, используем cleaned s_name
+                                    -- Для уникальных NPC (esc_2_12_stalker_fanat и т.д.)
                                     display_name = sname
+                                    -- Очищаем от цифр в конце и префиксов локаций
                                     display_name = string.gsub(display_name, "%d+$", "")
-                                    display_name = string.gsub(display_name, "^sim_", "")
-                                    safe_log("[DAMAGE_TRACKER] Display name from s_name (no story): " .. display_name)
+                                    display_name = string.gsub(display_name, "^esc_%d+_%d+_", "")
+                                    -- Заменяем подчёркивания на пробелы для читаемости
+                                    display_name = string.gsub(display_name, "_", " ")
+                                    safe_log("[DAMAGE_TRACKER] Display name from s_name (unique): " .. display_name)
                                 end
-                            else
-                                -- Для уникальных NPC (esc_2_12_stalker_fanat и т.д.)
-                                display_name = sname
-                                -- Очищаем от цифр в конце и префиксов локаций
-                                display_name = string.gsub(display_name, "%d+$", "")
-                                display_name = string.gsub(display_name, "^esc_%d+_%d+_", "")
-                                -- Заменяем подчёркивания на пробелы для читаемости
-                                display_name = string.gsub(display_name, "_", " ")
-                                safe_log("[DAMAGE_TRACKER] Display name from s_name (unique): " .. display_name)
                             end
                         end
                     end
