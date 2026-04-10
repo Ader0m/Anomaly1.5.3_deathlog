@@ -204,30 +204,43 @@ function on_game_start()
     safe_log("[DAMAGE_TRACKER] Registered actor_on_before_hit callback")
 end
 
--- Callback для обработки попадания в актёра (использует s_hit таблицу)
-function actor_on_before_hit_callback(s_hit)
+-- Callback для обработки попадания в актёра (использует s_hit userdata)
+function actor_on_before_hit_callback(s_hit, bone_id, flags)
     safe_log("[DAMAGE_TRACKER] CALLBACK FIRED (actor_on_before_hit)")
     
-    -- Диагностика всех полей s_hit таблицы
+    -- Диагностика типа s_hit
     safe_log("[DAMAGE_TRACKER] s_hit type: " .. type(s_hit))
     
-    if type(s_hit) ~= "table" then
-        safe_log("[DAMAGE_TRACKER] ERROR: s_hit is not a table!")
+    if type(s_hit) ~= "userdata" then
+        safe_log("[DAMAGE_TRACKER] ERROR: s_hit is not userdata!")
         return
     end
     
-    local power = s_hit.power or 0
-    local impulse = s_hit.impulse or 0
-    local who = s_hit.draftsman or s_hit.who
-    local bone_index = s_hit.bone_id or s_hit.bone or 0
-    local hit_type = s_hit.type or -1
+    -- Безопасное получение полей из SHit userdata
+    local power = 0
+    local hit_type = -1
+    local impulse = 0
+    local who = nil
+    
+    -- Пробуем получить поля через pcall
+    local ok_power, res_power = pcall(function() return s_hit.power end)
+    if ok_power then power = res_power or 0 end
+    
+    local ok_type, res_type = pcall(function() return s_hit.type end)
+    if ok_type then hit_type = res_type or -1 end
+    
+    local ok_impulse, res_impulse = pcall(function() return s_hit.impulse end)
+    if ok_impulse then impulse = res_impulse or 0 end
+    
+    local ok_who, res_who = pcall(function() return s_hit.draftsman end)
+    if ok_who then who = res_who end
     
     safe_log("[DAMAGE_TRACKER] Power: " .. safe_tostring(power) .. " | Hit Type: " .. safe_tostring(hit_type))
-    safe_log("[DAMAGE_TRACKER] Who: " .. safe_tostring(who))
-    safe_log("[DAMAGE_TRACKER] Bone: " .. safe_tostring(bone_index))
+    safe_log("[DAMAGE_TRACKER] Bone ID: " .. safe_tostring(bone_id))
     
     -- Получаем имя источника для классификации
     local source_name = get_source_name(who)
+    safe_log("[DAMAGE_TRACKER] Who: " .. safe_tostring(source_name or "nil"))
     
     -- Определяем категорию урона используя систему из damage_modifier.txt
     local damage_category = get_damage_category(hit_type, source_name)
@@ -235,20 +248,7 @@ function actor_on_before_hit_callback(s_hit)
     safe_log("[DAMAGE_TRACKER] DAMAGE CATEGORY: " .. damage_category)
 
     if who then
-        -- Безопасная попытка получить имя объекта
-        local ok, name = pcall(function()
-            if type(who) == "userdata" then
-                return who:name()
-            end
-            return safe_tostring(who)
-        end)
-        if ok and name then
-            safe_log("[DAMAGE_TRACKER] Source: " .. safe_tostring(name))
-            safe_log("[DAMAGE_TRACKER] CLASSIFIED HIT: [" .. damage_category .. "] from '" .. safe_tostring(name) .. "' - Power: " .. tostring(power))
-        else
-            safe_log("[DAMAGE_TRACKER] Source: <invalid object>")
-            safe_log("[DAMAGE_TRACKER] CLASSIFIED HIT: [" .. damage_category .. "] from <invalid object> - Power: " .. tostring(power))
-        end
+        safe_log("[DAMAGE_TRACKER] CLASSIFIED HIT: [" .. damage_category .. "] from '" .. safe_tostring(source_name) .. "' - Power: " .. tostring(power))
     else
         safe_log("[DAMAGE_TRACKER] Source: Nil (environment/fall/etc)")
         safe_log("[DAMAGE_TRACKER] CLASSIFIED HIT: [" .. damage_category .. "] from ENVIRONMENT - Power: " .. tostring(power))
