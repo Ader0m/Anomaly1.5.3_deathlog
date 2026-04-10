@@ -437,15 +437,14 @@ function on_game_start()
 end
 
 -- Callback для сохранения здоровья ДО получения урона
-function actor_on_before_hit(obj)
-    if obj and db.actor then
-        -- Сравниваем по ID объекта вместо прямого сравнения userdata
-        local ok_obj, obj_id = pcall(function() return obj:id() end)
-        local ok_actor, actor_id = pcall(function() return db.actor:id() end)
-        
-        if ok_obj and ok_actor and obj_id and actor_id and obj_id == actor_id then
-            hp_before = db.actor.health
-            safe_log("[DAMAGE_TRACKER] HP before hit: " .. tostring(hp_before or -1))
+-- Params: (shit, bone_id, flags) где shit - структура хита
+function actor_on_before_hit(shit, bone_id, flags)
+    -- Сохраняем здоровье актёра до применения урона
+    if db.actor then
+        local ok_hp, hp_val = pcall(function() return db.actor.health end)
+        if ok_hp and hp_val then
+            hp_before = hp_val
+            safe_log("[DAMAGE_TRACKER] HP before hit: " .. tostring(hp_before))
         end
     end
 end
