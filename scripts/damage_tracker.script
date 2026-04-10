@@ -492,6 +492,17 @@ function actor_on_before_hit(shit, bone_id, flags)
             if ok_hbone and hbone_val then
                 safe_log("[DAMAGE_TRACKER] Hit bone (from hit struct): " .. tostring(hbone_val))
             end
+            
+            -- Получаем power и impulse которые могут быть модифицированы
+            local ok_power, power_val = pcall(function() return shit:power() end)
+            if ok_power and power_val then
+                safe_log("[DAMAGE_TRACKER] Hit power: " .. tostring(power_val))
+            end
+            
+            local ok_impulse, impulse_val = pcall(function() return shit:impulse() end)
+            if ok_impulse and impulse_val then
+                safe_log("[DAMAGE_TRACKER] Hit impulse: " .. tostring(impulse_val))
+            end
         end
     end
 end
@@ -538,6 +549,13 @@ function actor_on_hit_callback(obj, amount, local_direction, who, bone_index)
                     safe_log("[DAMAGE_TRACKER] Hit struct amount (BASE): " .. tostring(hamount))
                     -- Базовый урон из хита - это урон ДО модификаторов, но если HP не изменился,
                     -- значит урон был заблокирован или это был miss
+                end
+                
+                -- Проверяем power который может содержать финальный урон после модификаторов
+                local ok_hpower, hpower = pcall(function() return hit_struct_before:power() end)
+                if ok_hpower and hpower and hpower > 0 then
+                    safe_log("[DAMAGE_TRACKER] Hit struct power (may be final damage): " .. tostring(hpower))
+                    -- Если HP не изменился но power > 0, возможно это был урон по броне
                 end
             end
         end
