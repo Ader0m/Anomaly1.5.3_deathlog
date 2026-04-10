@@ -25,6 +25,77 @@ local function safe_call_method(obj, method_name)
 end
 
 -- ============================================================================
+-- СЛОВАРЬ МУТАНТОВ: системное имя -> русское название
+-- Данные извлечены из ui_st_encyclopedia_mutants.xml
+-- ============================================================================
+
+local mutant_names = {
+    ["blind_dog"] = "Слепой пёс",
+    ["bloodsucker"] = "Кровосос",
+    ["boar"] = "Кабан",
+    ["burer"] = "Бюрер",
+    ["cat"] = "Кот",
+    ["chimera"] = "Химера",
+    ["controller"] = "Контролёр",
+    ["crow"] = "Ворона",
+    ["flesh"] = "Плоть",
+    ["fracture"] = "Излом",
+    ["karlik"] = "Карлик",
+    ["lurker"] = "Кикимора",
+    ["poltergeist"] = "Полтергейст",
+    ["pseudodog"] = "Псевдособака",
+    ["pseudogeist"] = "Чёрный полтергейст",
+    ["pseudogiant"] = "Псевдогигант",
+    ["psydog"] = "Пси-собака",
+    ["psysucker"] = "Пси-кровосос",
+    ["pyrogeist"] = "Огненный полтергейст",
+    ["rat"] = "Крыса",
+    ["snork"] = "Снорк",
+    ["tushkano"] = "Тушкан",
+    ["zombie"] = "Зомби",
+}
+
+-- Функция для получения имени мутанта с обрезкой суффиксов
+-- Примеры:
+--   get_mutant_name("boar") -> "Кабан"
+--   get_mutant_name("boar_02a_weak26696") -> "Кабан"
+--   get_mutant_name("mutant_boar_strong") -> "Кабан"
+--   get_mutant_name("m_boar") -> "Кабан"
+local function get_mutant_name(mutant_id)
+    if not mutant_id or type(mutant_id) ~= "string" then
+        return nil
+    end
+    
+    -- Обрезаем префиксы mutant_, m_ если есть
+    local name = mutant_id
+    if string.find(name, "^mutant_") then
+        name = string.sub(name, 8)
+    elseif string.find(name, "^m_") then
+        name = string.sub(name, 3)
+    end
+    
+    -- Обрезаем суффиксы: ищем базовое имя (только буквы до цифр или _)
+    -- Примеры: boar_02a_weak26696 -> boar, flesh_strong -> flesh
+    local base_name = string.match(name, "^([a-zA-Z]+)")
+    
+    if not base_name then
+        base_name = name
+    end
+    
+    -- Проверяем в словаре
+    if mutant_names[base_name] then
+        return mutant_names[base_name]
+    end
+    
+    -- Если не нашли, пробуем оригинальное имя (для случаев типа pseudodog)
+    if mutant_names[name] then
+        return mutant_names[name]
+    end
+    
+    return nil
+end
+
+-- ============================================================================
 -- ИНТЕГРАЦИЯ С DAMAGE_MODIFIER.TXT: Маппинги и классификация урона
 -- ============================================================================
 
@@ -285,7 +356,15 @@ end
 
 -- Функция для получения игрового имени мутанта (из системного имени)
 -- Например: mutant_flesh_strong -> Плоть, mutant_dog_weak -> Слепая собака
+-- Устарела, используется get_mutant_name() из словаря мутантов
 local function get_mutant_game_name(sys_name)
+    -- Сначала пробуем новый словарь мутантов (быстрее и надёжнее)
+    local name = get_mutant_name(sys_name)
+    if name then
+        return name
+    end
+    
+    -- Если не нашли в словаре, пробуем старый метод через st.get()
     if not sys_name or type(sys_name) ~= "string" then
         return nil
     end
