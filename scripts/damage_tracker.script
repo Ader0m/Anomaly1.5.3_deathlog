@@ -690,9 +690,36 @@ function actor_on_hit_callback(obj, amount, local_direction, who, bone_index)
     
     safe_log("[DAMAGE_TRACKER] DAMAGE TYPE ID: " .. tostring(damage_type_before or -1))
     safe_log("[DAMAGE_TRACKER] DAMAGE CATEGORY: " .. damage_category)
+    
+    -- Если атакующий является человеком (сталкером), получаем название его оружия
+    local weapon_name = nil
+    if who and type(who) == "userdata" then
+        local ok_is_stalker = pcall(function() return IsStalker(who) end)
+        if ok_is_stalker and IsStalker(who) then
+            -- Пытаемся получить оружие через best_weapon() или active_item()
+            local ok_wpn, weapon = pcall(function() return who:best_weapon() end)
+            if not ok_wpn or not weapon then
+                ok_wpn, weapon = pcall(function() return who:active_item() end)
+            end
+            
+            if ok_wpn and weapon and type(weapon) == "userdata" then
+                -- Получаем секцию оружия (системное имя)
+                local ok_sec, section = pcall(function() return weapon:section() end)
+                if ok_sec and section then
+                    weapon_name = section
+                    safe_log("[DAMAGE_TRACKER] Attacker is human/stalker, weapon section: " .. weapon_name)
+                end
+            end
+        end
+    end
 
     if who then
-        safe_log("[DAMAGE_TRACKER] CLASSIFIED HIT: [" .. damage_category .. "] from '" .. safe_tostring(display_name) .. "' - FINAL DAMAGE: " .. tostring(real_damage) .. " - Bone: " .. bone_name_ru)
+        local hit_message = "[DAMAGE_TRACKER] CLASSIFIED HIT: [" .. damage_category .. "] from '" .. safe_tostring(display_name) .. "' - FINAL DAMAGE: " .. tostring(real_damage) .. " - Bone: " .. bone_name_ru
+        -- Если атакующий человек и у него есть оружие, добавляем название оружия в лог
+        if weapon_name then
+            hit_message = hit_message .. " - Weapon: " .. weapon_name
+        end
+        safe_log(hit_message)
     else
         safe_log("[DAMAGE_TRACKER] Source: Nil (environment/fall/etc)")
         safe_log("[DAMAGE_TRACKER] CLASSIFIED HIT: [" .. damage_category .. "] from ENVIRONMENT - FINAL DAMAGE: " .. tostring(real_damage) .. " - Bone: " .. bone_name_ru)
