@@ -566,27 +566,22 @@ function actor_on_hit_callback(obj, amount, local_direction, who, bone_index)
     hit_struct_before = nil
     final_damage_from_power = nil
     
-    if real_damage <= 0 then
-        safe_log("[DAMAGE_TRACKER] Skipping hit with zero or negative damage (armor blocked or miss)")
-        return
+    -- Флаг: был ли удар заблокирован (урон 0)
+    local is_blocked = (real_damage <= 0)
+    
+    if is_blocked then
+        safe_log("[DAMAGE_TRACKER] Hit blocked by armor or missed (damage = 0)")
     end
     
-    if used_power_fallback then
-        safe_log("[DAMAGE_TRACKER] FINAL DAMAGE (from power fallback): " .. tostring(real_damage))
-    else
-        safe_log("[DAMAGE_TRACKER] FINAL DAMAGE (after modifiers/armor): " .. tostring(real_damage))
-    end
-    
+    -- Всегда формируем красивый итоговый лог (даже если урон 0)
     local bone_id = bone_index or 0
     
     -- Получаем категорию и название кости
     local bone_category = get_bone_category(bone_id)
     local bone_name_ru = get_bone_name_ru(bone_id)
-    safe_log("[DAMAGE_TRACKER] Bone Category: " .. bone_category .. " | Bone Name (RU): " .. bone_name_ru)
     
     -- Получаем имя источника для классификации
     local source_name = get_source_name(who)
-    safe_log("[DAMAGE_TRACKER] Who (raw): " .. safe_tostring(source_name or "nil"))
     
     -- Пытаемся получить отображаемое имя через alife объект если who это game_object
     local display_name = source_name
@@ -595,13 +590,11 @@ function actor_on_hit_callback(obj, amount, local_direction, who, bone_index)
         local ok_char_name, char_name = pcall(function() return who:character_name() end)
         if ok_char_name and char_name and char_name ~= "" then
             display_name = char_name
-            safe_log("[DAMAGE_TRACKER] Display name from character_name: " .. char_name)
         else
             -- Если character_name не доступен, пробуем получить nickname
             local ok_nick, nickname = pcall(function() return who:nickname() end)
             if ok_nick and nickname and nickname ~= "" then
                 display_name = nickname
-                safe_log("[DAMAGE_TRACKER] Display name from nickname: " .. nickname)
             else
                 -- Для мутантов пробуем получить игровое имя через словарь мутантов
                 -- Это позволяет перевести системное имя (boar_02a_weak26696, mutant_flesh_strong) в игровое (Кабан, Плоть)
@@ -610,7 +603,6 @@ function actor_on_hit_callback(obj, amount, local_direction, who, bone_index)
                     local mutant_game_name = get_mutant_name(sys_name)
                     if mutant_game_name then
                         display_name = mutant_game_name
-                        safe_log("[DAMAGE_TRACKER] Display name from mutant_name dictionary: " .. mutant_game_name)
                     end
                 end
                 
@@ -642,27 +634,23 @@ function actor_on_hit_callback(obj, amount, local_direction, who, bone_index)
                                             local ok_obj_name, obj_name = pcall(function() return story_data.object:name() end)
                                             if ok_obj_name and obj_name and obj_name ~= "" then
                                                 display_name = obj_name
-                                                safe_log("[DAMAGE_TRACKER] Display name from db.story: " .. obj_name)
                                             else
                                                 -- Если имени нет, используем cleaned s_name
                                                 display_name = sname
                                                 display_name = string.gsub(display_name, "%d+$", "")
                                                 display_name = string.gsub(display_name, "^sim_", "")
-                                                safe_log("[DAMAGE_TRACKER] Display name from s_name (sim): " .. display_name)
                                             end
                                         else
                                             -- Если db.story нет, используем cleaned s_name
                                             display_name = sname
                                             display_name = string.gsub(display_name, "%d+$", "")
                                             display_name = string.gsub(display_name, "^sim_", "")
-                                            safe_log("[DAMAGE_TRACKER] Display name from s_name (sim fallback): " .. display_name)
                                         end
                                     else
                                         -- Нет story_id, используем cleaned s_name
                                         display_name = sname
                                         display_name = string.gsub(display_name, "%d+$", "")
                                         display_name = string.gsub(display_name, "^sim_", "")
-                                        safe_log("[DAMAGE_TRACKER] Display name from s_name (no story): " .. display_name)
                                     end
                                 else
                                     -- Для уникальных NPC (esc_2_12_stalker_fanat и т.д.)
@@ -672,7 +660,6 @@ function actor_on_hit_callback(obj, amount, local_direction, who, bone_index)
                                     display_name = string.gsub(display_name, "^esc_%d+_%d+_", "")
                                     -- Заменяем подчёркивания на пробелы для читаемости
                                     display_name = string.gsub(display_name, "_", " ")
-                                    safe_log("[DAMAGE_TRACKER] Display name from s_name (unique): " .. display_name)
                                 end
                             end
                         end
@@ -682,23 +669,14 @@ function actor_on_hit_callback(obj, amount, local_direction, who, bone_index)
         end
     end
     
-    safe_log("[DAMAGE_TRACKER] Source display name: " .. safe_tostring(display_name or "nil"))
-    
-    -- Определяем категорию урона используя систему из damage_modifier.txt
-    -- Используем сохранённый тип урона из actor_on_before_hit
-    local damage_category = get_damage_category(damage_type_before or -1, display_name, nil)
-    
-    safe_log("[DAMAGE_TRACKER] DAMAGE TYPE ID: " .. tostring(damage_type_before or -1))
-    safe_log("[DAMAGE_TRACKER] DAMAGE CATEGORY: " .. damage_category)
-    
     -- Определяем, является ли атакующий человеком (сталкером) или мутантом
     local is_human = false
     local weapon_name = nil
     
     if who and type(who) == "userdata" then
         -- Проверяем, является ли объект сталкером
-        local ok_is_stalker = pcall(function() return IsStalker(who) end)
-        if ok_is_stalker and IsStalker(who) then
+        local ok_is_stalker, is_stalker_result = pcall(function() return IsStalker(who) end)
+        if ok_is_stalker and is_stalker_result then
             is_human = true
             -- Пытаемся получить оружие через best_weapon() или active_item()
             local ok_wpn, weapon = pcall(function() return who:best_weapon() end)
@@ -717,6 +695,38 @@ function actor_on_hit_callback(obj, amount, local_direction, who, bone_index)
     end
     
     -- Формируем красивый итоговый лог
+    if is_blocked then
+        -- Для заблокированных ударов показываем краткую информацию
+        if is_human then
+            local weapon_display = weapon_name or "Неизвестно"
+            weapon_display = string.gsub(weapon_display, "^wpn_", "")
+            weapon_display = string.gsub(weapon_display, "_", " ")
+            
+            safe_log("")
+            safe_log("=== [УДАР ЗАБЛОКИРОВАН] ===")
+            safe_log("Атакующий: " .. safe_tostring(display_name or "Неизвестно"))
+            safe_log("Оружие: " .. weapon_display)
+            safe_log("Попадание в: " .. bone_name_ru)
+            safe_log("Урон: 0.0 (броня)")
+            safe_log("===========================")
+        else
+            local mutant_name = display_name or "Неизвестный мутант"
+            
+            safe_log("")
+            safe_log("=== [УДАР ЗАБЛОКИРОВАН] ===")
+            safe_log("Мутант: " .. mutant_name)
+            safe_log("Урон: 0.0 (броня)")
+            safe_log("===========================")
+        end
+    end
+    
+    if real_damage <= 0 then
+        return
+    end
+    
+    safe_log("[DAMAGE_TRACKER] FINAL DAMAGE (after modifiers/armor): " .. tostring(real_damage))
+    
+    -- Формируем красивый итоговый лог для успешного попадания
     if is_human then
         -- Для НПC: Имя, Оружие, Кость, полученный урон
         local weapon_display = weapon_name or "Неизвестно"
