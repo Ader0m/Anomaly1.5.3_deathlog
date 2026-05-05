@@ -447,6 +447,78 @@ local function safe_log(...)
     log(...)
 end
 
+-- Глобальная переменная для хранения пути к файлу лога
+local log_file_path = nil
+local log_file_handle = nil
+
+-- Функция для инициализации файла лога
+local function init_log_file()
+    if log_file_path then
+        return log_file_path
+    end
+    
+    -- Получаем путь к appdata через FS.path
+    local ok, fs_path = pcall(function()
+        return FS.get_path("$app_data$")
+    end)
+    
+    if not ok or not fs_path then
+        -- Если не удалось получить путь, используем дефолтный
+        log_file_path = "logs/damage_tracker.log"
+    else
+        log_file_path = fs_path .. "logs/damage_tracker.log"
+    end
+    
+    -- Создаём директорию logs если она не существует
+    local ok_mkdir = pcall(function()
+        local dir_path = string.match(log_file_path, "(.*)/")
+        if dir_path then
+            FS.make_dir(dir_path)
+        end
+    end)
+    
+    return log_file_path
+end
+
+-- Функция для записи в файл лога
+local function write_to_log(message)
+    if not message then
+        return
+    end
+    
+    local ok, file_path = pcall(init_log_file)
+    if not ok or not file_path then
+        return
+    end
+    
+    -- Открываем файл в режиме дозаписи
+    local ok_write = pcall(function()
+        local file = io.open(file_path, "a")
+        if file then
+            file:write(message .. "\n")
+            file:close()
+        end
+    end)
+end
+
+-- Функция для безопасного логирования одновременно в консоль и файл
+local function safe_log_with_file(...)
+    local args = {...}
+    local message = ""
+    for i, arg in ipairs(args) do
+        if i > 1 then
+            message = message .. " "
+        end
+        message = message .. safe_tostring(arg)
+    end
+    
+    -- Логируем в консоль/xray.log
+    log(message)
+    
+    -- Логируем в файл
+    write_to_log(message)
+end
+
 
 -- Глобальная переменная для хранения здоровья до удара
 local hp_before = nil
@@ -677,8 +749,8 @@ function actor_on_hit_callback(obj, amount, local_direction, who, bone_index)
     -- Формируем красивый итоговый лог
     if is_blocked then
         -- Для заблокированных ударов показываем краткую информацию
-        safe_log("")
-        safe_log("[DAMAGE_TRACKER] [Получено попадание] ===")
+        safe_log_with_file("")
+        safe_log_with_file("[DAMAGE_TRACKER] [Получено попадание] ===")
         return
     end
     
@@ -697,25 +769,25 @@ function actor_on_hit_callback(obj, amount, local_direction, who, bone_index)
         
         local distance_str = distance and string.format("%.1f м", distance) or "Н/Д"
         
-        safe_log("")
-        safe_log("=== [ПОЛУЧЕН УРОН] ===")
-        safe_log("-- Сталкер --")
-        safe_log("Имя: " .. safe_tostring(display_name or "Неизвестно"))
-        safe_log("Оружие: " .. weapon_display)
-        safe_log(string.format("Полученный урон: %.1f", raw_damage))
-        safe_log("Часть тела: " .. bone_name_ru)
-        safe_log("Дистанция: " .. distance_str)
-        safe_log("=======================")
+        safe_log_with_file("")
+        safe_log_with_file("=== [ПОЛУЧЕН УРОН] ===")
+        safe_log_with_file("-- Сталкер --")
+        safe_log_with_file("Имя: " .. safe_tostring(display_name or "Неизвестно"))
+        safe_log_with_file("Оружие: " .. weapon_display)
+        safe_log_with_file(string.format("Полученный урон: %.1f", raw_damage))
+        safe_log_with_file("Часть тела: " .. bone_name_ru)
+        safe_log_with_file("Дистанция: " .. distance_str)
+        safe_log_with_file("=======================")
     elseif is_mutant then
         -- Монстр: Вид монстра, Полученный урон
         local mutant_name = display_name or "Неизвестный мутант"
         
-        safe_log("")
-        safe_log("=== [ПОЛУЧЕН УРОН] ===")
-        safe_log("-- Монстр --")
-        safe_log("Вид монстра: " .. mutant_name)
-        safe_log(string.format("Полученный урон: %.1f", raw_damage))
-        safe_log("=======================")
+        safe_log_with_file("")
+        safe_log_with_file("=== [ПОЛУЧЕН УРОН] ===")
+        safe_log_with_file("-- Монстр --")
+        safe_log_with_file("Вид монстра: " .. mutant_name)
+        safe_log_with_file(string.format("Полученный урон: %.1f", raw_damage))
+        safe_log_with_file("=======================")
     elseif is_anomaly then
         -- Аномалия: Название аномалии, Полученный урон, Тип урона
         local anomaly_display = anomaly_name or display_name or "Неизвестная аномалия"
@@ -724,21 +796,21 @@ function actor_on_hit_callback(obj, amount, local_direction, who, bone_index)
         
         local damage_type_display = damage_type_name or "Неизвестен"
         
-        safe_log("")
-        safe_log("=== [ПОЛУЧЕН УРОН] ===")
-        safe_log("-- Аномалия --")
-        safe_log("Название аномалии: " .. anomaly_display)
-        safe_log(string.format("Полученный урон: %.1f", raw_damage))
-        safe_log("Тип урона: " .. damage_type_display)
-        safe_log("=======================")
+        safe_log_with_file("")
+        safe_log_with_file("=== [ПОЛУЧЕН УРОН] ===")
+        safe_log_with_file("-- Аномалия --")
+        safe_log_with_file("Название аномалии: " .. anomaly_display)
+        safe_log_with_file(string.format("Полученный урон: %.1f", raw_damage))
+        safe_log_with_file("Тип урона: " .. damage_type_display)
+        safe_log_with_file("=======================")
     else
         -- Неизвестный источник
-        safe_log("")
-        safe_log("=== [ПОЛУЧЕН УРОН] ===")
-        safe_log("Источник: " .. safe_tostring(display_name or "Неизвестно"))
-        safe_log(string.format("Полученный урон: %.1f", raw_damage))
-        safe_log("Часть тела: " .. bone_name_ru)
-        safe_log("=======================")
+        safe_log_with_file("")
+        safe_log_with_file("=== [ПОЛУЧЕН УРОН] ===")
+        safe_log_with_file("Источник: " .. safe_tostring(display_name or "Неизвестно"))
+        safe_log_with_file(string.format("Полученный урон: %.1f", raw_damage))
+        safe_log_with_file("Часть тела: " .. bone_name_ru)
+        safe_log_with_file("=======================")
     end
 end
 
