@@ -669,9 +669,21 @@ function actor_on_hit_callback(obj, amount, local_direction, who, bone_index)
         end
     end
     
-    -- Определяем, является ли атакующий человеком (сталкером) или мутантом
+    -- Определяем, является ли атакующий человеком (сталкером), мутантом или аномалией
     local is_human = false
+    local is_mutant = false
+    local is_anomaly = false
     local weapon_name = nil
+    local anomaly_name = nil
+    local damage_type_name = nil
+    
+    -- Получаем тип урона для классификации
+    if hit_struct_before and type(hit_struct_before) == "userdata" then
+        local ok_dtype, dtype_val = pcall(function() return hit_struct_before:type() end)
+        if ok_dtype and dtype_val then
+            damage_type_name = get_damage_category(dtype_val, source_name, hit_struct_before)
+        end
+    end
     
     if who and type(who) == "userdata" then
         -- Проверяем, является ли объект сталкером
@@ -691,6 +703,36 @@ function actor_on_hit_callback(obj, amount, local_direction, who, bone_index)
                     weapon_name = section
                 end
             end
+        else
+            -- Проверяем, является ли объект мутантом
+            local ok_is_monster, is_monster_result = pcall(function() return IsMonster(who) end)
+            if ok_is_monster and is_monster_result then
+                is_mutant = true
+            else
+                -- Проверяем, является ли объект аномалией (зона)
+                local ok_is_anomaly, is_anomaly_result = pcall(function() return IsAnomaly(who) end)
+                if ok_is_anomaly and is_anomaly_result then
+                    is_anomaly = true
+                    -- Для аномалий пробуем получить название через section()
+                    local ok_sec, section = pcall(function() return who:section() end)
+                    if ok_sec and section then
+                        anomaly_name = section
+                    end
+                end
+            end
+        end
+    end
+    
+    -- Вычисляем дистанцию до источника урона (если источник существует)
+    local distance = nil
+    if who and type(who) == "userdata" and db.actor then
+        local ok_pos_who, pos_who = pcall(function() return who:Position() end)
+        local ok_pos_actor, pos_actor = pcall(function() return db.actor:Position() end)
+        if ok_pos_who and ok_pos_actor and pos_who and pos_actor then
+            local dx = pos_who.x - pos_actor.x
+            local dy = pos_who.y - pos_actor.y
+            local dz = pos_who.z - pos_actor.z
+            distance = math.sqrt(dx*dx + dy*dy + dz*dz)
         end
     end
     
@@ -709,12 +751,22 @@ function actor_on_hit_callback(obj, amount, local_direction, who, bone_index)
             safe_log("Попадание в: " .. bone_name_ru)
             safe_log("Урон: 0.0 (броня)")
             safe_log("===========================")
-        else
+        elseif is_mutant then
             local mutant_name = display_name or "Неизвестный мутант"
             
             safe_log("")
             safe_log("=== [УДАР ЗАБЛОКИРОВАН] ===")
             safe_log("Мутант: " .. mutant_name)
+            safe_log("Урон: 0.0 (броня)")
+            safe_log("===========================")
+        elseif is_anomaly then
+            local anomaly_display = anomaly_name or display_name or "Неизвестная аномалия"
+            anomaly_display = string.gsub(anomaly_display, "^zone_", "")
+            anomaly_display = string.gsub(anomaly_display, "_", " ")
+            
+            safe_log("")
+            safe_log("=== [УДАР ЗАБЛОКИРОВАН] ===")
+            safe_log("Аномалия: " .. anomaly_display)
             safe_log("Урон: 0.0 (броня)")
             safe_log("===========================")
         end
@@ -728,28 +780,56 @@ function actor_on_hit_callback(obj, amount, local_direction, who, bone_index)
     
     -- Формируем красивый итоговый лог для успешного попадания
     if is_human then
-        -- Для НПC: Имя, Оружие, Кость, полученный урон
+        -- Сталкер: Имя, Оружие, Полученный урон, Часть тела, Дистанция
         local weapon_display = weapon_name or "Неизвестно"
         -- Убираем префикс wpn_ для читаемости
         weapon_display = string.gsub(weapon_display, "^wpn_", "")
         -- Заменяем подчёркивания на пробелы
         weapon_display = string.gsub(weapon_display, "_", " ")
         
+        local distance_str = distance and string.format("%.1f м", distance) or "Н/Д"
+        
         safe_log("")
         safe_log("=== [ПОЛУЧЕН УРОН] ===")
-        safe_log("Атакующий: " .. safe_tostring(display_name or "Неизвестно"))
+        safe_log("-- Сталкер --")
+        safe_log("Имя: " .. safe_tostring(display_name or "Неизвестно"))
         safe_log("Оружие: " .. weapon_display)
-        safe_log("Попадание в: " .. bone_name_ru)
-        safe_log(string.format("Урон: %.1f", real_damage))
+        safe_log(string.format("Полученный урон: %.1f", real_damage))
+        safe_log("Часть тела: " .. bone_name_ru)
+        safe_log("Дистанция: " .. distance_str)
         safe_log("=======================")
-    else
-        -- Для монстров: вид мутанта, полученный урон
+    elseif is_mutant then
+        -- Монстр: Вид монстра, Полученный урон
         local mutant_name = display_name or "Неизвестный мутант"
         
         safe_log("")
         safe_log("=== [ПОЛУЧЕН УРОН] ===")
-        safe_log("Мутант: " .. mutant_name)
-        safe_log(string.format("Урон: %.1f", real_damage))
+        safe_log("-- Монстр --")
+        safe_log("Вид монстра: " .. mutant_name)
+        safe_log(string.format("Полученный урон: %.1f", real_damage))
+        safe_log("=======================")
+    elseif is_anomaly then
+        -- Аномалия: Название аномалии, Полученный урон, Тип урона
+        local anomaly_display = anomaly_name or display_name or "Неизвестная аномалия"
+        anomaly_display = string.gsub(anomaly_display, "^zone_", "")
+        anomaly_display = string.gsub(anomaly_display, "_", " ")
+        
+        local damage_type_display = damage_type_name or "Неизвестен"
+        
+        safe_log("")
+        safe_log("=== [ПОЛУЧЕН УРОН] ===")
+        safe_log("-- Аномалия --")
+        safe_log("Название аномалии: " .. anomaly_display)
+        safe_log(string.format("Полученный урон: %.1f", real_damage))
+        safe_log("Тип урона: " .. damage_type_display)
+        safe_log("=======================")
+    else
+        -- Неизвестный источник
+        safe_log("")
+        safe_log("=== [ПОЛУЧЕН УРОН] ===")
+        safe_log("Источник: " .. safe_tostring(display_name or "Неизвестно"))
+        safe_log(string.format("Полученный урон: %.1f", real_damage))
+        safe_log("Часть тела: " .. bone_name_ru)
         safe_log("=======================")
     end
 end
