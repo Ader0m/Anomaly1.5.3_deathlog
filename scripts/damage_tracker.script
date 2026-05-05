@@ -457,8 +457,6 @@ local final_damage_from_power = nil
 function on_game_start()
     RegisterScriptCallback("actor_on_before_hit", actor_on_before_hit)
     RegisterScriptCallback("actor_on_hit_callback", actor_on_hit_callback)
-    safe_log("[DAMAGE_TRACKER] Registered actor_on_before_hit callback")
-    safe_log("[DAMAGE_TRACKER] Registered actor_on_hit_callback callback")
 end
 
 -- Callback для сохранения здоровья ДО получения урона
@@ -472,7 +470,6 @@ function actor_on_before_hit(shit, bone_id, flags)
         local ok_hp, hp_val = pcall(function() return db.actor.health end)
         if ok_hp and hp_val then
             hp_before = hp_val
-            safe_log("[DAMAGE_TRACKER] HP before hit: " .. tostring(hp_before))
         end
         
         -- Сохраняем тип урона из структуры хита
@@ -480,85 +477,26 @@ function actor_on_before_hit(shit, bone_id, flags)
             local ok_dtype, dtype_val = pcall(function() return shit:type() end)
             if ok_dtype and dtype_val then
                 damage_type_before = dtype_val
-                safe_log("[DAMAGE_TRACKER] Damage type before hit: " .. tostring(damage_type_before))
             end
             
-            -- Пытаемся получить базовый урон из хита (amount)
-            local ok_amount, amount_val = pcall(function() return shit:amount() end)
-            if ok_amount and amount_val then
-                safe_log("[DAMAGE_TRACKER] Hit amount (base from hit struct): " .. tostring(amount_val))
-            end
-            
-            -- Логируем bone из хита для отладки
-            local ok_hbone, hbone_val = pcall(function() return shit:bone() end)
-            if ok_hbone and hbone_val then
-                safe_log("[DAMAGE_TRACKER] Hit bone (from hit struct): " .. tostring(hbone_val))
-            end
-            
-            -- Получаем power и impulse которые могут быть модифицированы
+            -- Получаем power который будем использовать как чистый урон
             local ok_power, power_val = pcall(function() return shit:power() end)
             if ok_power and power_val then
-                safe_log("[DAMAGE_TRACKER] Hit power: " .. tostring(power_val))
-                -- Сохраняем power как потенциальный финальный урон
                 final_damage_from_power = power_val
-            end
-            
-            local ok_impulse, impulse_val = pcall(function() return shit:impulse() end)
-            if ok_impulse and impulse_val then
-                safe_log("[DAMAGE_TRACKER] Hit impulse: " .. tostring(impulse_val))
             end
         end
     end
 end
 
--- Callback для обработки попадания в актёра (вычисляет реальный урон через разницу здоровья)
+-- Callback для обработки попадания в актёра (использует чистый урон из hit.power())
 -- Params: (obj, amount, local_direction, who, bone_index)
 function actor_on_hit_callback(obj, amount, local_direction, who, bone_index)
-    safe_log("[DAMAGE_TRACKER] CALLBACK FIRED (actor_on_hit_callback)")
-    
-    -- Диагностика типа параметров
-    safe_log("[DAMAGE_TRACKER] obj type: " .. type(obj))
-    safe_log("[DAMAGE_TRACKER] amount (base): " .. safe_tostring(amount))
-    safe_log("[DAMAGE_TRACKER] bone_index: " .. safe_tostring(bone_index))
-    safe_log("[DAMAGE_TRACKER] hp_before value: " .. safe_tostring(hp_before))
-    safe_log("[DAMAGE_TRACKER] hit_struct_before exists: " .. safe_tostring(hit_struct_before ~= nil))
-    
-    -- Вычисляем реальный урон через разницу здоровья
-    local hp_after = -1
-    if db.actor then
-        local ok_hp, hp_val = pcall(function() return db.actor.health end)
-        if ok_hp then
-            hp_after = hp_val
-            safe_log("[DAMAGE_TRACKER] HP after (current): " .. tostring(hp_after))
-        end
-    end
-    
-    local real_damage = 0
-    local used_power_fallback = false
-    
-    if hp_before and hp_after >= 0 and hp_before >= 0 then
-        real_damage = hp_before - hp_after
-        -- Умножаем на 100 для UI-формата (здоровье в диапазоне 0.0–1.0)
-        real_damage = real_damage * 100
-        safe_log("[DAMAGE_TRACKER] HP before: " .. tostring(hp_before) .. ", HP after: " .. tostring(hp_after))
-        safe_log("[DAMAGE_TRACKER] HP DIFFERENCE (raw): " .. tostring(hp_before - hp_after))
-        safe_log("[DAMAGE_TRACKER] REAL DAMAGE calculated: " .. tostring(real_damage))
-        
-        -- Если разница равна 0, проверяем power() из hit структуры как fallback
-        if real_damage <= 0 then
-            safe_log("[DAMAGE_TRACKER] WARNING: Zero damage from HP difference")
-            -- Используем сохранённый final_damage_from_power если он есть
-            if final_damage_from_power and final_damage_from_power > 0 then
-                -- Конвертируем power в тот же формат (умножаем на 100)
-                real_damage = final_damage_from_power * 100
-                used_power_fallback = true
-                safe_log("[DAMAGE_TRACKER] Using power() as fallback damage: " .. tostring(real_damage))
-            end
-        end
+    -- Получаем чистый урон из power() структуры хита (до модификаторов брони)
+    local raw_damage = 0
+    if final_damage_from_power and final_damage_from_power > 0 then
+        raw_damage = final_damage_from_power * 100
     else
-        -- Если hp_before не установлен, используем amount как запасной вариант
-        real_damage = amount or 0
-        safe_log("[DAMAGE_TRACKER] WARNING: hp_before not set, using base amount as fallback: " .. tostring(real_damage))
+        raw_damage = amount or 0
     end
     
     -- Сбрасываем hp_before для следующего удара
@@ -567,11 +505,7 @@ function actor_on_hit_callback(obj, amount, local_direction, who, bone_index)
     final_damage_from_power = nil
     
     -- Флаг: был ли удар заблокирован (урон 0)
-    local is_blocked = (real_damage <= 0)
-    
-    if is_blocked then
-        safe_log("[DAMAGE_TRACKER] Hit blocked by armor or missed (damage = 0)")
-    end
+    local is_blocked = (raw_damage <= 0)
     
     -- Всегда формируем красивый итоговый лог (даже если урон 0)
     local bone_id = bone_index or 0
@@ -739,44 +673,14 @@ function actor_on_hit_callback(obj, amount, local_direction, who, bone_index)
     -- Формируем красивый итоговый лог
     if is_blocked then
         -- Для заблокированных ударов показываем краткую информацию
-        if is_human then
-            local weapon_display = weapon_name or "Неизвестно"
-            weapon_display = string.gsub(weapon_display, "^wpn_", "")
-            weapon_display = string.gsub(weapon_display, "_", " ")
-            
-            safe_log("")
-            safe_log("=== [УДАР ЗАБЛОКИРОВАН] ===")
-            safe_log("Атакующий: " .. safe_tostring(display_name or "Неизвестно"))
-            safe_log("Оружие: " .. weapon_display)
-            safe_log("Попадание в: " .. bone_name_ru)
-            safe_log("Урон: 0.0 (броня)")
-            safe_log("===========================")
-        elseif is_mutant then
-            local mutant_name = display_name or "Неизвестный мутант"
-            
-            safe_log("")
-            safe_log("=== [УДАР ЗАБЛОКИРОВАН] ===")
-            safe_log("Мутант: " .. mutant_name)
-            safe_log("Урон: 0.0 (броня)")
-            safe_log("===========================")
-        elseif is_anomaly then
-            local anomaly_display = anomaly_name or display_name or "Неизвестная аномалия"
-            anomaly_display = string.gsub(anomaly_display, "^zone_", "")
-            anomaly_display = string.gsub(anomaly_display, "_", " ")
-            
-            safe_log("")
-            safe_log("=== [УДАР ЗАБЛОКИРОВАН] ===")
-            safe_log("Аномалия: " .. anomaly_display)
-            safe_log("Урон: 0.0 (броня)")
-            safe_log("===========================")
-        end
-    end
-    
-    if real_damage <= 0 then
+        safe_log("")
+        safe_log("[DAMAGE_TRACKER] [Получено попадание] ===")
         return
     end
     
-    safe_log("[DAMAGE_TRACKER] FINAL DAMAGE (after modifiers/armor): " .. tostring(real_damage))
+    if raw_damage <= 0 then
+        return
+    end
     
     -- Формируем красивый итоговый лог для успешного попадания
     if is_human then
@@ -794,7 +698,7 @@ function actor_on_hit_callback(obj, amount, local_direction, who, bone_index)
         safe_log("-- Сталкер --")
         safe_log("Имя: " .. safe_tostring(display_name or "Неизвестно"))
         safe_log("Оружие: " .. weapon_display)
-        safe_log(string.format("Полученный урон: %.1f", real_damage))
+        safe_log(string.format("Полученный урон: %.1f", raw_damage))
         safe_log("Часть тела: " .. bone_name_ru)
         safe_log("Дистанция: " .. distance_str)
         safe_log("=======================")
@@ -806,7 +710,7 @@ function actor_on_hit_callback(obj, amount, local_direction, who, bone_index)
         safe_log("=== [ПОЛУЧЕН УРОН] ===")
         safe_log("-- Монстр --")
         safe_log("Вид монстра: " .. mutant_name)
-        safe_log(string.format("Полученный урон: %.1f", real_damage))
+        safe_log(string.format("Полученный урон: %.1f", raw_damage))
         safe_log("=======================")
     elseif is_anomaly then
         -- Аномалия: Название аномалии, Полученный урон, Тип урона
@@ -820,7 +724,7 @@ function actor_on_hit_callback(obj, amount, local_direction, who, bone_index)
         safe_log("=== [ПОЛУЧЕН УРОН] ===")
         safe_log("-- Аномалия --")
         safe_log("Название аномалии: " .. anomaly_display)
-        safe_log(string.format("Полученный урон: %.1f", real_damage))
+        safe_log(string.format("Полученный урон: %.1f", raw_damage))
         safe_log("Тип урона: " .. damage_type_display)
         safe_log("=======================")
     else
@@ -828,7 +732,7 @@ function actor_on_hit_callback(obj, amount, local_direction, who, bone_index)
         safe_log("")
         safe_log("=== [ПОЛУЧЕН УРОН] ===")
         safe_log("Источник: " .. safe_tostring(display_name or "Неизвестно"))
-        safe_log(string.format("Полученный урон: %.1f", real_damage))
+        safe_log(string.format("Полученный урон: %.1f", raw_damage))
         safe_log("Часть тела: " .. bone_name_ru)
         safe_log("=======================")
     end
